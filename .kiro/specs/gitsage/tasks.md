@@ -87,11 +87,22 @@
   - Detect lock files by filename patterns
   - _Requirements: 1.1, 5.1_
 
-- [ ]* 3.2 Write property test for staged changes retrieval
+- [x] 3.2 Write property test for staged changes retrieval
+
+
+
+
+
+
+
   - **Property 1: Staged changes retrieval**
   - **Validates: Requirements 1.1**
 
-- [ ]* 3.3 Write property test for lock file exclusion
+- [ ] 3.3 Write property test for lock file exclusion
+
+
+
+
   - **Property 13: Lock file exclusion**
   - **Validates: Requirements 5.1**
 
