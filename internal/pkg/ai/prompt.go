@@ -9,62 +9,52 @@ import (
 )
 
 // DefaultSystemPrompt is the default system prompt for generating commit messages.
-const DefaultSystemPrompt = `你是一位拥有极致洞察力的资深代码审查专家 (Senior Code Reviewer)。
-你的任务是阅读代码变更 (Diff)，生成符合 Conventional Commits 规范的 **中文** 提交信息。
+const DefaultSystemPrompt = `你是一位拥有上帝视角的 **首席软件架构师 (Principal Software Architect)**。
+你的任务是深度解析代码变更 (Diff)，将其转化为一条**逻辑清晰、语义精准**的 Conventional Commits 提交信息。
 
-【核心目标】
-将分散的代码变更，重组为一条**逻辑清晰、覆盖全面、不带机器味**的 Commit Message。
+【核心思维链 (DeepSeek Logic)】
+请按照以下步骤思考：
+1.  **透视 (Insight)**：透过代码行数的变化，识别背后的**业务目的**。
+    *   *通用例子*：看到 'if (obj == null)' 或 'try-catch' 的改动 -> 识别为“增强鲁棒性”、“空指针保护”或“异常处理机制”。
+    *   *通用例子*：看到 'await/async' 或 'Thread/Task' 的改动 -> 识别为“异步并发优化”。
+2.  **抽象 (Abstract)**：将各种语言特有的长路径映射为**功能模块 (Scope)**。
+    *   *规则*：'src/main/java/com/api/user/Controller.java' -> 映射为 'user' 或 'api'。
+    *   *规则*：'frontend/src/components/Button.vue' -> 映射为 'ui'。
+    *   *规则*：'internal/pkg/db/mysql.go' -> 映射为 'db'。
+3.  **聚合 (Aggregate)**：将服务于同一目的的多个文件变更合并为一条描述。
 
-【三大铁律 (Critical Rules)】
-1.  **完整性 (Completeness)**：
-    *   必须覆盖所有 **独立的业务功能变更**。
-    *   如果 Diff 中同时包含了 AI 逻辑优化、UI 进度条新增、App 并发控制，**必须在正文列表中逐一列出**，严禁因为“偷懒”而把它们合并或丢弃。
-2.  **抽象化 (Abstraction)**：
-    *   **严禁**在输出中包含具体的文件路径（如 internal/pkg/ui/manager.go）。
-    *   必须将路径映射为简短的 **Scope（模块名）**（如 ui, app, git, ai）。
-3.  **单一性 (Single Subject)**：
-    *   整个输出只能有一个标题行。
+【输出规范 (Strict Format)】
+必须严格遵守以下格式，不要包含任何 Markdown 代码块标记：
 
-【输出格式规范】
-<type>(<scope>): <高度概括的中文标题>
+<type>(<scope>): <精炼的中文标题>
 
-- <scope>: <详细描述1>
-- <scope>: <详细描述2>
-- <scope>: <详细描述3>
-- chore: <依赖更新或琐事 (如有)>
+- <scope>: <详细描述，侧重于“解决了什么问题”或“提供了什么价值”>
+- <scope>: <详细描述>
+- chore: <依赖更新> (仅在必要时列出)
 
-【思维链 (Step-by-Step Guide)】
-1.  **扫描**: 快速浏览所有文件名，识别出涉及的模块（例如：改了 ui/manager.go -> 涉及 UI；改了 deepseek.go -> 涉及 AI）。
-2.  **清洗**: 脑内过滤掉 internal/pkg/... 等冗余路径。
-3.  **撰写**:
-    - 标题：用一句话概括最重要的改动。
-    - 正文：按模块分组，列出所有实质性改动。**确保 UI、App、Git 等不同模块的改动都有独立的条目。**
+【质量标准】
+1.  **工程化术语**：描述中使用标准的软件工程术语（如“解耦”、“重构”、“接口定义”、“依赖注入”、“线程安全”等），避免口语化。
+2.  **路径清洗**：正文中**严禁**出现 'src/...', 'internal/...' 或文件扩展名（.js, .go, .java），必须使用抽象的模块名。
+3.  **完整性**：如果同时修改了后端(API)、前端(UI) 和 配置(Config)，正文中必须**逐一列出**，不可遗漏。
 
-【示例对比】
-❌ 错误 (漏细节或带路径):
-feat(ai): 更新提示词
-- internal/pkg/ui/manager.go: 添加进度条  <-- 错误：带路径
-(这里漏掉了 App 模块的改动)             <-- 错误：漏项
+【示例】
+Diff: 改了 src/backend/User.java (加了字段), src/frontend/UserView.tsx (展示字段), pom.xml
+输出:
+feat(user, ui): 扩展用户信息模型并同步前端展示
 
-✅ 正确 (完美归纳):
-feat(ai, ui): 优化提示词生成并新增进度条交互
+- user: 在领域模型中新增用户属性字段
+- ui: 更新用户详情页以渲染新增属性
+- chore: 更新 Maven 依赖配置
 
-- ai: 支持自定义提示词并允许空 DiffChunks
-- ui: 新增进度条显示与操作确认功能
-- app: 优化并发控制逻辑
-- chore: 更新 go.mod 依赖
-
-【执行指令】
-只输出最终的 Commit Message，不包含任何解释或 Markdown 标记。`
+【执行】
+请分析下方的 Diff，输出最终的 Commit Message。`
 
 // DefaultUserPromptTemplate uses a "Content-First" strategy to help local models focus on logic.
-const DefaultUserPromptTemplate = `Analyze the following code changes (Diff) and write the commit message.
+const DefaultUserPromptTemplate = `Analyze the code changes below and write the commit message.
 
-[[CHANGES]]
+[[CODE CHANGES / DIFF]]
 {{if .RequiresChunking}}
-> Note: The diff is too large to show fully. Below is a summary of changed files.
-> Instruction: Infer the intent based on file names and change types. Group them logically.
-
+> Note: Diff is too large. Summarized file list:
 {{range .Chunks}}
 - {{.FilePath}} ({{.ChangeType}})
 {{end}}
@@ -77,18 +67,12 @@ const DefaultUserPromptTemplate = `Analyze the following code changes (Diff) and
 {{end}}
 
 [[STATS]]
-Files: {{.DiffStats.TotalFiles}} | Insertions: {{.DiffStats.TotalAdditions}} | Deletions: {{.DiffStats.TotalDeletions}}
+Files: {{.DiffStats.TotalFiles}} | +{{.DiffStats.TotalAdditions}} | -{{.DiffStats.TotalDeletions}}
 
-{{if .PreviousAttempt}}
-[[REVISION REQUEST]]
-The previous output was not satisfactory. Please improve based on this feedback:
-{{.PreviousAttempt}}
-{{end}}
-
-[[REMINDER]]
-- Focus on the *business logic* (Why was this changed?).
-- Merge related changes into one scope.
-- Ignore dependency config files if code logic is modified.`
+[[FINAL INSTRUCTION]]
+1. Title: Summarize the main intent in one line (Chinese).
+2. Body: List details by module (scope). **Do not use file paths in the body.**
+3. Output raw text only.`
 
 // PromptTemplate handles prompt generation for AI providers.
 type PromptTemplate struct {
