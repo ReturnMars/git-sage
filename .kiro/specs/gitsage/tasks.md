@@ -98,7 +98,13 @@
   - **Property 1: Staged changes retrieval**
   - **Validates: Requirements 1.1**
 
-- [ ] 3.3 Write property test for lock file exclusion
+- [x] 3.3 Write property test for lock file exclusion
+
+
+
+
+
+
 
 
 
@@ -119,7 +125,13 @@
   - Generate diff summaries for large changes
   - _Requirements: 5.1, 5.2, 5.3, 5.5_
 
-- [ ]* 4.1 Write property test for diff chunking
+- [x] 4.1 Write property test for diff chunking
+
+
+
+
+
+
   - **Property 14: Diff chunking threshold**
   - **Validates: Requirements 5.2**
 
@@ -145,7 +157,19 @@
   - Support custom prompts via configuration
   - _Requirements: 4.1, 4.3_
 
-- [ ]* 5.2 Write property test for prompt instruction inclusion
+- [x] 5.2 Write property test for prompt instruction inclusion
+
+
+
+
+
+
+
+
+
+
+
+
   - **Property 10: Prompt instruction inclusion**
   - **Validates: Requirements 4.3**
 
@@ -158,7 +182,13 @@
   - Handle malformed responses gracefully
   - _Requirements: 4.1, 4.2_
 
-- [ ]* 5.4 Write property test for commit format validation
+- [x] 5.4 Write property test for commit format validation
+
+
+
+
+
+
   - **Property 8: Conventional Commits format validation**
   - **Validates: Requirements 4.1**
 
