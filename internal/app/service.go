@@ -618,7 +618,7 @@ func (s *CommitService) handleAccept(
 		return nil
 	}
 
-	// First pull to sync with remote
+	// First pull to sync with remote (if upstream exists)
 	pullSpinner := s.uiManager.ShowSpinner("Pulling from remote...")
 	pullSpinner.Start()
 
@@ -644,10 +644,17 @@ func (s *CommitService) handleAccept(
 	pushSpinner := s.uiManager.ShowSpinner("Pushing to remote...")
 	pushSpinner.Start()
 
-	if err := s.gitClient.Push(ctx); err != nil {
+	// Use PushWithUpstream if no upstream branch configured
+	if pullResult.Skipped {
+		err = s.gitClient.PushWithUpstream(ctx)
+	} else {
+		err = s.gitClient.Push(ctx)
+	}
+
+	if err != nil {
 		pushSpinner.Stop()
 		s.uiManager.ShowError(fmt.Errorf("failed to push: %w", err))
-		return nil // Don't return error, commit was successful
+		return nil
 	}
 
 	pushSpinner.Stop()

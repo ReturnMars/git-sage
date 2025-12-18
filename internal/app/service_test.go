@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,6 +75,21 @@ func (m *MockGitClient) Push(ctx context.Context) error {
 func (m *MockGitClient) HasRemote(ctx context.Context) (bool, error) {
 	args := m.Called(ctx)
 	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockGitClient) HasUpstream(ctx context.Context) (bool, error) {
+	args := m.Called(ctx)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockGitClient) PushWithUpstream(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
+func (m *MockGitClient) GetCurrentBranch(ctx context.Context) (string, error) {
+	args := m.Called(ctx)
+	return args.String(0), args.Error(1)
 }
 
 // MockAIProvider is a mock implementation of ai.Provider
@@ -258,11 +274,12 @@ func TestGenerateAndCommit_NoStagedChanges(t *testing.T) {
 
 	// Setup mock expectations
 	gitClient.On("HasStagedChanges", mock.Anything).Return(false, nil)
+	gitClient.On("HasUnstagedChanges", mock.Anything).Return(false, nil) // No unstaged changes either
 
 	err := service.GenerateAndCommit(context.Background(), nil)
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no staged changes found")
+	assert.Contains(t, err.Error(), "no changes found")
 	gitClient.AssertExpectations(t)
 }
 
@@ -320,6 +337,7 @@ func TestGenerateAndCommit_SuccessfulCommit(t *testing.T) {
 	gitClient.On("GetStagedDiff", mock.Anything).Return(chunks, nil)
 	gitClient.On("GetDiffStats", mock.Anything).Return(stats, nil)
 	gitClient.On("Commit", mock.Anything, mock.Anything).Return(nil)
+	gitClient.On("HasRemote", mock.Anything).Return(false, nil) // No remote, skip push
 
 	diffProcessor.On("Process", mock.Anything, chunks).Return(processedDiff, nil)
 
@@ -488,6 +506,7 @@ func TestGenerateAndCommit_Edit(t *testing.T) {
 	gitClient.On("GetStagedDiff", mock.Anything).Return(chunks, nil)
 	gitClient.On("GetDiffStats", mock.Anything).Return(stats, nil)
 	gitClient.On("Commit", mock.Anything, "fix: edited message").Return(nil)
+	gitClient.On("HasRemote", mock.Anything).Return(false, nil)
 
 	diffProcessor.On("Process", mock.Anything, chunks).Return(processedDiff, nil)
 
@@ -545,6 +564,7 @@ func TestGenerateAndCommit_Regenerate(t *testing.T) {
 	gitClient.On("GetStagedDiff", mock.Anything).Return(chunks, nil)
 	gitClient.On("GetDiffStats", mock.Anything).Return(stats, nil)
 	gitClient.On("Commit", mock.Anything, "feat: second attempt").Return(nil)
+	gitClient.On("HasRemote", mock.Anything).Return(false, nil)
 
 	diffProcessor.On("Process", mock.Anything, chunks).Return(processedDiff, nil)
 
@@ -633,45 +653,47 @@ func TestGenerateAndCommit_ChunkedDiff(t *testing.T) {
 	uiManager := &MockUIManager{}
 	historyMgr := &MockHistoryManager{}
 	spinner := &MockSpinner{}
+	progressSpinner := &MockProgressSpinner{}
 	cfg := &config.Config{
 		History: config.HistoryConfig{Enabled: false},
 	}
 
 	service := NewCommitService(gitClient, aiProvider, diffProcessor, uiManager, historyMgr, cfg)
 
-	// Setup mock expectations with chunked diff
+	// Create large content to trigger two-phase processing (> 10KB total)
+	largeContent := strings.Repeat("x", 4*1024) // 4KB each
+
+	// Setup mock expectations with large diff (over 10KB threshold)
+	// Two-phase processing triggers when totalSize > 10*1024 AND fileCount > 1
 	chunks := []git.DiffChunk{
-		{FilePath: "file1.go", ChangeType: git.ChangeTypeModified, Content: "content1"},
-		{FilePath: "file2.go", ChangeType: git.ChangeTypeAdded, Content: "content2"},
-		{FilePath: "file3.go", ChangeType: git.ChangeTypeModified, Content: "content3"},
+		{FilePath: "file1.go", ChangeType: git.ChangeTypeModified, Content: largeContent},
+		{FilePath: "file2.go", ChangeType: git.ChangeTypeAdded, Content: largeContent},
+		{FilePath: "file3.go", ChangeType: git.ChangeTypeModified, Content: largeContent},
 	}
 	stats := &git.DiffStats{TotalFiles: 3, Chunks: chunks}
 	processedDiff := &processor.ProcessedDiff{
 		Chunks:           chunks,
-		TotalSize:        15000, // Over threshold
+		TotalSize:        12 * 1024, // Over 10KB threshold
 		RequiresChunking: true,
-		ChunkGroups: []processor.ChunkGroup{
-			{Chunks: []git.DiffChunk{chunks[0]}, TotalSize: 5000},
-			{Chunks: []git.DiffChunk{chunks[1]}, TotalSize: 5000},
-			{Chunks: []git.DiffChunk{chunks[2]}, TotalSize: 5000},
-		},
-		Summary: "Summary of changes",
+		Summary:          "Summary of changes",
 	}
 
 	gitClient.On("HasStagedChanges", mock.Anything).Return(true, nil)
 	gitClient.On("GetStagedDiff", mock.Anything).Return(chunks, nil)
 	gitClient.On("GetDiffStats", mock.Anything).Return(stats, nil)
 	gitClient.On("Commit", mock.Anything, mock.Anything).Return(nil)
+	gitClient.On("HasRemote", mock.Anything).Return(false, nil)
 
 	diffProcessor.On("Process", mock.Anything, chunks).Return(processedDiff, nil)
 
-	// Each chunk group gets its own AI call
+	// Two-phase: 3 summarize calls (one per file group) + 1 final generate call = 4 calls
 	aiProvider.On("GenerateCommitMessage", mock.Anything, mock.Anything).Return(&ai.GenerateResponse{
 		Subject: "feat: chunk change",
 		RawText: "feat: chunk change",
 	}, nil)
 
 	uiManager.On("ShowSpinner", mock.Anything).Return(spinner)
+	uiManager.On("ShowProgressSpinner", mock.Anything, mock.Anything).Return(progressSpinner)
 	uiManager.On("DisplayMessage", mock.Anything).Return(nil)
 	uiManager.On("PromptAction").Return(ui.ActionAccept, nil)
 	uiManager.On("ShowSuccess", mock.Anything).Return()
@@ -679,12 +701,16 @@ func TestGenerateAndCommit_ChunkedDiff(t *testing.T) {
 
 	spinner.On("Start").Return()
 	spinner.On("Stop").Return()
+	progressSpinner.On("Start").Return()
+	progressSpinner.On("Stop").Return()
+	progressSpinner.On("SetCurrent", mock.Anything).Return()
+	progressSpinner.On("SetCurrentFile", mock.Anything).Return()
 
 	err := service.GenerateAndCommit(context.Background(), &CommitOptions{})
 
 	assert.NoError(t, err)
-	// Should be called 3 times for 3 chunk groups
-	aiProvider.AssertNumberOfCalls(t, "GenerateCommitMessage", 3)
+	// Two-phase: 3 file groups summarized + 1 final generation = 4 AI calls
+	aiProvider.AssertNumberOfCalls(t, "GenerateCommitMessage", 4)
 }
 
 func TestGenerateAndCommit_NoChangesAfterFiltering(t *testing.T) {
