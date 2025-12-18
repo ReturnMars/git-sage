@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gitsage/gitsage/internal/pkg/ai"
@@ -25,8 +24,11 @@ var writeFile = os.WriteFile
 // MaxRegenerationAttempts is the maximum number of times a user can regenerate a commit message.
 const MaxRegenerationAttempts = 5
 
-// MaxConcurrentAICalls is the maximum number of concurrent AI calls for chunk processing.
-const MaxConcurrentAICalls = 3
+// MaxGroupSize is the maximum size (in bytes) for a group of files to be summarized together.
+const MaxGroupSize = 4 * 1024 // 4KB per group
+
+// MaxConcurrentGroups is the maximum number of concurrent AI calls.
+const MaxConcurrentGroups = 2
 
 // CommitOptions contains options for the commit workflow.
 type CommitOptions struct {
@@ -95,7 +97,33 @@ func (s *CommitService) GenerateAndCommit(ctx context.Context, opts *CommitOptio
 		return fmt.Errorf("failed to check staged changes: %w", err)
 	}
 	if !hasChanges {
-		return fmt.Errorf("no staged changes found. Use 'git add' to stage changes before generating a commit message")
+		// Check if there are unstaged changes that can be added
+		hasUnstaged, err := s.gitClient.HasUnstagedChanges(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to check unstaged changes: %w", err)
+		}
+		if !hasUnstaged {
+			return fmt.Errorf("no changes found. Nothing to commit")
+		}
+
+		// Ask user if they want to auto-add all changes
+		confirmed, err := s.uiManager.PromptConfirm("No staged changes found. Run 'git add .' to stage all changes?")
+		if err != nil {
+			return fmt.Errorf("failed to prompt user: %w", err)
+		}
+		if !confirmed {
+			return fmt.Errorf("no staged changes. Use 'git add' to stage changes before generating a commit message")
+		}
+
+		// Execute git add .
+		spinner := s.uiManager.ShowSpinner("Staging all changes...")
+		spinner.Start()
+		if err := s.gitClient.AddAll(ctx); err != nil {
+			spinner.Stop()
+			return fmt.Errorf("failed to stage changes: %w", err)
+		}
+		spinner.Stop()
+		s.uiManager.ShowSuccess("All changes staged")
 	}
 
 	// Step 2: Get diff and stats
@@ -199,8 +227,7 @@ func (s *CommitService) generateAndHandleLoop(
 }
 
 // generateCommitMessage generates a commit message using the AI provider.
-// Handles both single-request and chunked diff scenarios.
-// Uses cache if enabled and noCache is false.
+// For large diffs with multiple files, uses two-phase processing for better results.
 func (s *CommitService) generateCommitMessage(
 	ctx context.Context,
 	processedDiff *processor.ProcessedDiff,
@@ -209,10 +236,6 @@ func (s *CommitService) generateCommitMessage(
 	previousAttempt string,
 	noCache bool,
 ) (*ai.GenerateResponse, error) {
-	spinner := s.uiManager.ShowSpinner("Generating commit message...")
-	spinner.Start()
-	defer spinner.Stop()
-
 	// Generate cache key from diff content
 	var diffContent strings.Builder
 	for _, chunk := range processedDiff.Chunks {
@@ -220,7 +243,6 @@ func (s *CommitService) generateCommitMessage(
 	}
 
 	// Check cache if enabled and not bypassed
-	// Don't use cache for regeneration (previousAttempt is set)
 	cacheKey := ""
 	if s.cache != nil && !noCache && previousAttempt == "" {
 		cacheKey = cache.GenerateCacheKey(
@@ -237,14 +259,22 @@ func (s *CommitService) generateCommitMessage(
 		}
 	}
 
-	// If chunking is required, process chunks concurrently
+	totalSize := diffContent.Len()
+	fileCount := len(processedDiff.Chunks)
+
 	var response *ai.GenerateResponse
 	var err error
 
-	if processedDiff.RequiresChunking && len(processedDiff.ChunkGroups) > 1 {
-		response, err = s.generateFromChunks(ctx, processedDiff, diffStats, customPrompt, previousAttempt)
+	// Decision: use two-phase processing for large diffs with multiple files
+	if totalSize > 10*1024 && fileCount > 1 {
+		// Two-phase processing has its own progress UI
+		response, err = s.generateWithTwoPhase(ctx, processedDiff, diffStats, previousAttempt)
 	} else {
-		// Single request for non-chunked diffs
+		// Direct processing: show simple spinner
+		spinner := s.uiManager.ShowSpinner("Generating commit message...")
+		spinner.Start()
+		defer spinner.Stop()
+
 		req := &ai.GenerateRequest{
 			DiffChunks:      processedDiff.Chunks,
 			DiffStats:       diffStats,
@@ -260,242 +290,242 @@ func (s *CommitService) generateCommitMessage(
 
 	// Store in cache if enabled
 	if s.cache != nil && cacheKey != "" && response != nil {
-		s.cache.Set(cacheKey, response, 0) // Use default TTL
+		s.cache.Set(cacheKey, response, 0)
 	}
 
 	return response, nil
 }
 
-// chunkResult holds the result of processing a single chunk group.
-type chunkResult struct {
-	index    int
-	response *ai.GenerateResponse
-	err      error
+// fileGroup represents a group of files to be summarized together.
+type fileGroup struct {
+	chunks []git.DiffChunk
+	files  []string
 }
 
-// generateFromChunks processes diff chunks concurrently and aggregates results.
-func (s *CommitService) generateFromChunks(
+// generateWithTwoPhase implements two-phase processing for large diffs.
+// Phase 1: Group small files together, then summarize each group
+// Phase 2: Generate final commit message from summaries
+func (s *CommitService) generateWithTwoPhase(
 	ctx context.Context,
 	processedDiff *processor.ProcessedDiff,
 	diffStats *git.DiffStats,
-	customPrompt string,
 	previousAttempt string,
 ) (*ai.GenerateResponse, error) {
-	chunkGroups := processedDiff.ChunkGroups
-	numGroups := len(chunkGroups)
+	// Step 1: Group files by size to minimize API calls
+	groups := s.groupFilesBySize(processedDiff.Chunks)
 
-	// Limit concurrent calls
-	maxConcurrent := MaxConcurrentAICalls
-	if numGroups < maxConcurrent {
-		maxConcurrent = numGroups
-	}
+	// Create progress spinner
+	progress := s.uiManager.ShowProgressSpinner("Analyzing files", len(groups))
+	progress.Start()
+	defer progress.Stop()
 
-	// Create channels for results and semaphore for concurrency control
-	results := make(chan chunkResult, numGroups)
-	semaphore := make(chan struct{}, maxConcurrent)
+	// Step 2: Process groups in batches (MaxConcurrentGroups at a time)
+	summaries := make([]string, len(groups))
+	completed := 0
 
-	var wg sync.WaitGroup
+	for batchStart := 0; batchStart < len(groups); batchStart += MaxConcurrentGroups {
+		batchEnd := batchStart + MaxConcurrentGroups
+		if batchEnd > len(groups) {
+			batchEnd = len(groups)
+		}
 
-	// Process each chunk group concurrently
-	for i, group := range chunkGroups {
-		wg.Add(1)
-		go func(idx int, chunkGroup processor.ChunkGroup) {
-			defer wg.Done()
+		type result struct {
+			index   int
+			summary string
+			err     error
+		}
+		batchLen := batchEnd - batchStart
+		resultChan := make(chan result, batchLen)
 
-			// Acquire semaphore
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			// Check context cancellation
-			select {
-			case <-ctx.Done():
-				results <- chunkResult{index: idx, err: ctx.Err()}
-				return
-			default:
+		// Update progress with current files
+		var currentFiles []string
+		for i := batchStart; i < batchEnd; i++ {
+			if len(groups[i].files) > 0 {
+				currentFiles = append(currentFiles, groups[i].files[0])
 			}
+		}
+		if len(currentFiles) > 0 {
+			progress.SetCurrentFile(strings.Join(currentFiles, ", "))
+		}
 
-			// Generate commit message for this chunk group
-			req := &ai.GenerateRequest{
-				DiffChunks:      chunkGroup.Chunks,
-				DiffStats:       diffStats,
-				CustomPrompt:    customPrompt,
-				PreviousAttempt: previousAttempt,
+		// Launch goroutines for this batch
+		for i := batchStart; i < batchEnd; i++ {
+			idx := i
+			group := groups[i]
+			go func() {
+				summary, err := s.summarizeFileGroup(ctx, group)
+				resultChan <- result{index: idx, summary: summary, err: err}
+			}()
+		}
+
+		// Wait for batch to complete
+		for j := 0; j < batchLen; j++ {
+			r := <-resultChan
+			completed++
+			progress.SetCurrent(completed)
+
+			if r.err != nil {
+				// Fallback: list files without AI summary
+				var files []string
+				for _, c := range groups[r.index].chunks {
+					files = append(files, fmt.Sprintf("- %s (+%d -%d)", c.FilePath, c.Additions, c.Deletions))
+				}
+				summaries[r.index] = strings.Join(files, "\n")
+			} else {
+				summaries[r.index] = r.summary
 			}
+		}
 
-			resp, err := s.aiProvider.GenerateCommitMessage(ctx, req)
-			results <- chunkResult{index: idx, response: resp, err: err}
-		}(i, group)
-	}
-
-	// Wait for all goroutines to complete
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results
-	responses := make([]*ai.GenerateResponse, numGroups)
-	var errors []error
-
-	for result := range results {
-		if result.err != nil {
-			errors = append(errors, fmt.Errorf("chunk %d: %w", result.index, result.err))
-		} else {
-			responses[result.index] = result.response
+		// Delay between batches
+		if batchEnd < len(groups) {
+			time.Sleep(1 * time.Second)
 		}
 	}
 
-	// Handle partial failures gracefully
-	if len(errors) > 0 {
-		// If all chunks failed, return the first error
-		if len(errors) == numGroups {
-			return nil, fmt.Errorf("all chunk processing failed: %w", errors[0])
-		}
-		// Log partial failures but continue with successful results
-		// In a real implementation, we might want to log these warnings
-	}
+	// Phase 2: Generate final commit message
+	progress.Stop()
+	finalSpinner := s.uiManager.ShowSpinner("Generating commit message...")
+	finalSpinner.Start()
+	defer finalSpinner.Stop()
 
-	// Aggregate responses into a single commit message
-	return s.aggregateResponses(responses, processedDiff.Summary), nil
+	return s.generateFromSummaries(ctx, summaries, diffStats, previousAttempt)
 }
 
-// aggregateResponses combines multiple AI responses into a single commit message.
-func (s *CommitService) aggregateResponses(responses []*ai.GenerateResponse, summary string) *ai.GenerateResponse {
-	var subjects []string
-	var bodies []string
-	var footers []string
+// groupFilesBySize groups files together until each group reaches MaxGroupSize.
+func (s *CommitService) groupFilesBySize(chunks []git.DiffChunk) []fileGroup {
+	var groups []fileGroup
+	var currentGroup fileGroup
+	currentSize := 0
 
-	for _, resp := range responses {
-		if resp == nil {
+	for _, chunk := range chunks {
+		chunkSize := len(chunk.Content)
+
+		// If single file is larger than MaxGroupSize, put it in its own group
+		if chunkSize >= MaxGroupSize {
+			// Save current group if not empty
+			if len(currentGroup.chunks) > 0 {
+				groups = append(groups, currentGroup)
+				currentGroup = fileGroup{}
+				currentSize = 0
+			}
+			// Add large file as its own group
+			groups = append(groups, fileGroup{
+				chunks: []git.DiffChunk{chunk},
+				files:  []string{chunk.FilePath},
+			})
 			continue
 		}
-		if resp.Subject != "" {
-			subjects = append(subjects, resp.Subject)
+
+		// If adding this file would exceed MaxGroupSize, start a new group
+		if currentSize+chunkSize > MaxGroupSize && len(currentGroup.chunks) > 0 {
+			groups = append(groups, currentGroup)
+			currentGroup = fileGroup{}
+			currentSize = 0
 		}
-		if resp.Body != "" {
-			bodies = append(bodies, resp.Body)
-		}
-		if resp.Footer != "" {
-			footers = append(footers, resp.Footer)
-		}
+
+		// Add file to current group
+		currentGroup.chunks = append(currentGroup.chunks, chunk)
+		currentGroup.files = append(currentGroup.files, chunk.FilePath)
+		currentSize += chunkSize
 	}
 
-	// If we have multiple subjects, try to create a combined subject
-	var finalSubject string
-	if len(subjects) == 1 {
-		finalSubject = subjects[0]
-	} else if len(subjects) > 1 {
-		// Try to extract a common type and create a combined subject
-		finalSubject = s.combineSubjects(subjects)
+	// Don't forget the last group
+	if len(currentGroup.chunks) > 0 {
+		groups = append(groups, currentGroup)
 	}
 
-	// Combine bodies
-	var finalBody string
-	if len(bodies) == 1 {
-		finalBody = bodies[0]
-	} else if len(bodies) > 1 {
-		finalBody = strings.Join(bodies, "\n\n")
-	}
-
-	// Combine footers (deduplicate)
-	var finalFooter string
-	if len(footers) > 0 {
-		finalFooter = s.deduplicateFooters(footers)
-	}
-
-	// Build raw text
-	var rawParts []string
-	if finalSubject != "" {
-		rawParts = append(rawParts, finalSubject)
-	}
-	if finalBody != "" {
-		rawParts = append(rawParts, "", finalBody)
-	}
-	if finalFooter != "" {
-		rawParts = append(rawParts, "", finalFooter)
-	}
-
-	return &ai.GenerateResponse{
-		Subject: finalSubject,
-		Body:    finalBody,
-		Footer:  finalFooter,
-		RawText: strings.Join(rawParts, "\n"),
-	}
+	return groups
 }
 
-// typePriority defines the priority order for commit types when counts are equal.
-// Higher priority types are preferred when aggregating multiple commits.
-var typePriority = map[string]int{
-	"feat":     10,
-	"fix":      9,
-	"perf":     8,
-	"refactor": 7,
-	"docs":     6,
-	"test":     5,
-	"style":    4,
-	"ci":       3,
-	"build":    2,
-	"chore":    1,
-	"revert":   0,
+// summarizeFileGroup generates a summary for a group of files.
+func (s *CommitService) summarizeFileGroup(ctx context.Context, group fileGroup) (string, error) {
+	var sb strings.Builder
+
+	// Build combined diff content
+	for _, chunk := range group.chunks {
+		content := chunk.Content
+		// Truncate individual file if too large
+		if len(content) > 2*1024 {
+			content = content[:2*1024] + "\n... [truncated]"
+		}
+		sb.WriteString(fmt.Sprintf("=== %s (%s, +%d -%d) ===\n%s\n\n",
+			chunk.FilePath, chunk.ChangeType, chunk.Additions, chunk.Deletions, content))
+	}
+
+	prompt := fmt.Sprintf(`简要描述以下文件的改动（每个文件一句话，不超过20字，中文）:
+
+%s
+
+格式:
+- 文件名: 改动描述`, sb.String())
+
+	req := &ai.GenerateRequest{
+		CustomPrompt: prompt,
+	}
+
+	resp, err := s.aiProvider.GenerateCommitMessage(ctx, req)
+	if err != nil {
+		return "", err
+	}
+
+	summary := strings.TrimSpace(resp.RawText)
+	if summary == "" {
+		summary = resp.Subject
+	}
+
+	return summary, nil
 }
 
-// combineSubjects attempts to create a combined subject from multiple subjects.
-func (s *CommitService) combineSubjects(subjects []string) string {
-	if len(subjects) == 0 {
-		return ""
-	}
-	if len(subjects) == 1 {
-		return subjects[0]
-	}
-
-	// Try to find a common commit type
-	typeCount := make(map[string]int)
-	for _, subj := range subjects {
-		cm := message.NewCommitMessage(subj)
-		if cm.Type != "" {
-			typeCount[cm.Type]++
+// generateFromSummaries generates the final commit message from file summaries.
+func (s *CommitService) generateFromSummaries(
+	ctx context.Context,
+	summaries []string,
+	diffStats *git.DiffStats,
+	previousAttempt string,
+) (*ai.GenerateResponse, error) {
+	// Filter empty summaries
+	var validSummaries []string
+	for _, s := range summaries {
+		if s != "" {
+			validSummaries = append(validSummaries, s)
 		}
 	}
 
-	// Find the most common type, using priority as tiebreaker
-	var mostCommonType string
-	maxCount := 0
-	maxPriority := -1
-	for t, count := range typeCount {
-		priority := typePriority[t]
-		if count > maxCount || (count == maxCount && priority > maxPriority) {
-			mostCommonType = t
-			maxCount = count
-			maxPriority = priority
-		}
-	}
+	prompt := fmt.Sprintf(`根据以下文件改动摘要，生成一个 Conventional Commits 格式的 commit message（中文）:
 
-	// If we found a common type, use it
-	if mostCommonType != "" {
-		return fmt.Sprintf("%s: multiple changes across %d files", mostCommonType, len(subjects))
-	}
+文件数: %d
+总添加: %d 行
+总删除: %d 行
 
-	// Default to chore for mixed changes
-	return fmt.Sprintf("chore: multiple changes across %d files", len(subjects))
-}
+各文件改动:
+%s
 
-// deduplicateFooters removes duplicate footer lines.
-func (s *CommitService) deduplicateFooters(footers []string) string {
-	seen := make(map[string]bool)
-	var unique []string
+%s
 
-	for _, footer := range footers {
-		lines := strings.Split(footer, "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" && !seen[line] {
-				seen[line] = true
-				unique = append(unique, line)
+要求:
+1. Subject 格式: <type>(<scope>): <简短描述>（不超过50字）
+2. Body 必须包含：按模块/目录分组列出主要改动，每个模块一行，格式如：
+   - 模块名: 具体功能描述
+3. 如果有多个模块，都要列出
+4. 只输出 commit message，不要解释`,
+		diffStats.TotalFiles,
+		diffStats.TotalAdditions,
+		diffStats.TotalDeletions,
+		strings.Join(validSummaries, "\n"),
+		func() string {
+			if previousAttempt != "" {
+				return fmt.Sprintf("\n上次生成的不满意，请重新生成:\n%s", previousAttempt)
 			}
-		}
+			return ""
+		}(),
+	)
+
+	req := &ai.GenerateRequest{
+		CustomPrompt: prompt,
+		DiffStats:    diffStats,
 	}
 
-	return strings.Join(unique, "\n")
+	return s.aiProvider.GenerateCommitMessage(ctx, req)
 }
 
 // validateAndWarn validates the commit message and shows warnings if needed.

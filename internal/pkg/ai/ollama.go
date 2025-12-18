@@ -133,7 +133,8 @@ func (p *OllamaProvider) GenerateCommitMessage(ctx context.Context, req *Generat
 		return nil, errors.New("request cannot be nil")
 	}
 
-	if len(req.DiffChunks) == 0 {
+	// Allow empty DiffChunks if CustomPrompt is provided (for summary-based generation)
+	if len(req.DiffChunks) == 0 && req.CustomPrompt == "" {
 		return nil, errors.New("no diff chunks provided")
 	}
 
@@ -222,8 +223,15 @@ func (p *OllamaProvider) GenerateCommitMessage(ctx context.Context, req *Generat
 
 	rawText := resp.Message.Content
 
+	// Log raw AI response in verbose mode
+	apperrors.Debug("Raw AI response:\n%s", rawText)
+
 	// Parse the response into structured format
 	parsed := ParseCommitMessage(rawText)
+
+	// Log parsed result in verbose mode
+	apperrors.Debug("Parsed - Type: %s, Scope: %s, Subject: %s, Body: %s",
+		parsed.Type, parsed.Scope, parsed.Subject, parsed.Body)
 
 	return parsed.ToGenerateResponse(rawText), nil
 }

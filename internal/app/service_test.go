@@ -48,6 +48,16 @@ func (m *MockGitClient) HasStagedChanges(ctx context.Context) (bool, error) {
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockGitClient) HasUnstagedChanges(ctx context.Context) (bool, error) {
+	args := m.Called(ctx)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockGitClient) AddAll(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
 // MockAIProvider is a mock implementation of ai.Provider
 type MockAIProvider struct {
 	mock.Mock
@@ -112,8 +122,18 @@ func (m *MockUIManager) ShowSpinner(text string) ui.Spinner {
 	return args.Get(0).(ui.Spinner)
 }
 
+func (m *MockUIManager) ShowProgressSpinner(text string, total int) ui.ProgressSpinner {
+	args := m.Called(text, total)
+	return args.Get(0).(ui.ProgressSpinner)
+}
+
 func (m *MockUIManager) ShowError(err error) {
 	m.Called(err)
+}
+
+func (m *MockUIManager) PromptConfirm(message string) (bool, error) {
+	args := m.Called(message)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockUIManager) ShowSuccess(message string) {
@@ -135,6 +155,35 @@ func (m *MockSpinner) Stop() {
 
 func (m *MockSpinner) UpdateText(text string) {
 	m.Called(text)
+}
+
+// MockProgressSpinner is a mock implementation of ui.ProgressSpinner
+type MockProgressSpinner struct {
+	mock.Mock
+}
+
+func (m *MockProgressSpinner) Start() {
+	m.Called()
+}
+
+func (m *MockProgressSpinner) Stop() {
+	m.Called()
+}
+
+func (m *MockProgressSpinner) UpdateText(text string) {
+	m.Called(text)
+}
+
+func (m *MockProgressSpinner) SetTotal(total int) {
+	m.Called(total)
+}
+
+func (m *MockProgressSpinner) SetCurrent(current int) {
+	m.Called(current)
+}
+
+func (m *MockProgressSpinner) SetCurrentFile(file string) {
+	m.Called(file)
 }
 
 // MockHistoryManager is a mock implementation of history.Manager
@@ -658,106 +707,6 @@ func TestGenerateAndCommit_NoChangesAfterFiltering(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no changes to commit after filtering")
 }
-
-func TestAggregateResponses(t *testing.T) {
-	service := &CommitService{}
-
-	tests := []struct {
-		name      string
-		responses []*ai.GenerateResponse
-		summary   string
-		expected  *ai.GenerateResponse
-	}{
-		{
-			name: "single response",
-			responses: []*ai.GenerateResponse{
-				{Subject: "feat: add feature", Body: "Body text", Footer: "Refs: #123"},
-			},
-			summary: "Summary",
-			expected: &ai.GenerateResponse{
-				Subject: "feat: add feature",
-				Body:    "Body text",
-				Footer:  "Refs: #123",
-			},
-		},
-		{
-			name: "multiple responses same type",
-			responses: []*ai.GenerateResponse{
-				{Subject: "feat: add feature 1"},
-				{Subject: "feat: add feature 2"},
-			},
-			summary: "Summary",
-			expected: &ai.GenerateResponse{
-				Subject: "feat: multiple changes across 2 files",
-			},
-		},
-		{
-			name: "multiple responses different types",
-			responses: []*ai.GenerateResponse{
-				{Subject: "feat: add feature"},
-				{Subject: "fix: fix bug"},
-			},
-			summary: "Summary",
-			expected: &ai.GenerateResponse{
-				Subject: "feat: multiple changes across 2 files", // First type found wins when counts are equal
-			},
-		},
-		{
-			name:      "nil responses",
-			responses: []*ai.GenerateResponse{nil, nil},
-			summary:   "Summary",
-			expected: &ai.GenerateResponse{
-				Subject: "",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := service.aggregateResponses(tt.responses, tt.summary)
-			assert.Equal(t, tt.expected.Subject, result.Subject)
-		})
-	}
-}
-
-func TestCombineSubjects(t *testing.T) {
-	service := &CommitService{}
-
-	tests := []struct {
-		name     string
-		subjects []string
-		expected string
-	}{
-		{
-			name:     "empty",
-			subjects: []string{},
-			expected: "",
-		},
-		{
-			name:     "single",
-			subjects: []string{"feat: add feature"},
-			expected: "feat: add feature",
-		},
-		{
-			name:     "multiple same type",
-			subjects: []string{"feat: add feature 1", "feat: add feature 2"},
-			expected: "feat: multiple changes across 2 files",
-		},
-		{
-			name:     "multiple different types",
-			subjects: []string{"feat: add feature", "fix: fix bug", "docs: update docs"},
-			expected: "feat: multiple changes across 3 files", // First type found wins when counts are equal
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := service.combineSubjects(tt.subjects)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestFormatCommitMessage(t *testing.T) {
 	service := &CommitService{}
 

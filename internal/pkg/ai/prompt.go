@@ -9,23 +9,26 @@ import (
 )
 
 // DefaultSystemPrompt is the default system prompt for generating commit messages.
-const DefaultSystemPrompt = `You are an expert at writing semantic git commit messages.
+const DefaultSystemPrompt = `你是 Git commit message 专家。用中文生成 Conventional Commits 格式的提交信息。
 
-Format Requirements:
-- Use Conventional Commits format: <type>(<scope>): <subject>
-- Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
-- Subject: imperative mood, no period, max 72 characters
-- Body: optional, explain what and why (not how)
-- Footer: optional, reference issues or breaking changes
+格式: <type>(<scope>): <中文描述>
 
-Rules:
-1. Be concise and specific
-2. Focus on the "what" and "why", not the "how"
-3. Use present tense ("add" not "added")
-4. First line should be standalone summary
-5. Separate subject from body with blank line
+type 必须是: feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert
+scope 可选，用英文小写表示模块名（如 api, config, ui）
+描述用中文，简洁准确，不超过50字，不加句号
 
-Output only the commit message, no explanations.`
+示例:
+feat(auth): 添加用户登录功能
+fix(api): 修复空指针异常
+refactor(config): 重构配置加载逻辑
+docs: 更新 README 文档
+
+如果改动较大，可加 body 说明:
+feat(core): 实现消息队列
+
+支持异步消息处理，提升系统吞吐量
+
+只输出 commit message，不要解释。`
 
 // DefaultUserPromptTemplate is the default user prompt template.
 const DefaultUserPromptTemplate = `Generate a commit message for these changes:

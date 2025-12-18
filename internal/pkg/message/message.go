@@ -16,7 +16,8 @@ var ValidCommitTypes = []string{
 }
 
 // MaxSubjectLength is the recommended maximum length for commit subject lines.
-const MaxSubjectLength = 72
+// Relaxed to 100 for better Chinese language support.
+const MaxSubjectLength = 100
 
 // conventionalCommitRegex matches the Conventional Commits format.
 // Format: <type>(<scope>): <subject> or <type>: <subject>

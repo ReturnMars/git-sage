@@ -28,30 +28,6 @@ func TestActionString(t *testing.T) {
 	}
 }
 
-func TestMapSelectionToAction(t *testing.T) {
-	m := NewDefaultManager(true, "")
-
-	tests := []struct {
-		selection string
-		expected  Action
-	}{
-		{"accept", ActionAccept},
-		{"edit", ActionEdit},
-		{"regenerate", ActionRegenerate},
-		{"cancel", ActionCancel},
-		{"unknown", ActionCancel},
-		{"", ActionCancel},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.selection, func(t *testing.T) {
-			if got := m.mapSelectionToAction(tt.selection); got != tt.expected {
-				t.Errorf("mapSelectionToAction(%q) = %v, want %v", tt.selection, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestFormatMessageForEdit(t *testing.T) {
 	m := NewDefaultManager(true, "")
 

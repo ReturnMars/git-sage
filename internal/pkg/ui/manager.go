@@ -6,8 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
@@ -47,14 +51,24 @@ type Spinner interface {
 	UpdateText(text string)
 }
 
+// ProgressSpinner provides loading animation with progress tracking.
+type ProgressSpinner interface {
+	Spinner
+	SetTotal(total int)
+	SetCurrent(current int)
+	SetCurrentFile(file string)
+}
+
 // Manager defines the interface for UI operations.
 type Manager interface {
 	DisplayMessage(message *ai.GenerateResponse) error
 	PromptAction() (Action, error)
 	EditMessage(message *ai.GenerateResponse) (*ai.GenerateResponse, error)
 	ShowSpinner(text string) Spinner
+	ShowProgressSpinner(text string, total int) ProgressSpinner
 	ShowError(err error)
 	ShowSuccess(message string)
+	PromptConfirm(message string) (bool, error)
 }
 
 // DefaultManager implements the Manager interface using charmbracelet libraries.
@@ -126,7 +140,8 @@ func (m *DefaultManager) initStyles() {
 		border: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("62")).
-			Padding(1, 2),
+			Padding(1, 2).
+			Width(80),
 	}
 }
 
@@ -138,10 +153,7 @@ func (m *DefaultManager) DisplayMessage(message *ai.GenerateResponse) error {
 
 	fmt.Println()
 	fmt.Println(m.styles.title.Render("📝 Generated Commit Message"))
-	fmt.Println()
-
-	// Build the message display
-	var msgBuilder strings.Builder
+	fmt.Println(strings.Repeat("-", 50))
 
 	// Subject line
 	subject := message.Subject
@@ -152,70 +164,154 @@ func (m *DefaultManager) DisplayMessage(message *ai.GenerateResponse) error {
 			subject = lines[0]
 		}
 	}
-	msgBuilder.WriteString(m.styles.subject.Render(subject))
+	fmt.Println(m.styles.subject.Render(subject))
 
 	// Body
 	if message.Body != "" {
-		msgBuilder.WriteString("\n\n")
-		msgBuilder.WriteString(m.styles.body.Render(message.Body))
+		fmt.Println()
+		fmt.Println(m.styles.body.Render(message.Body))
 	}
 
 	// Footer
 	if message.Footer != "" {
-		msgBuilder.WriteString("\n\n")
-		msgBuilder.WriteString(m.styles.footer.Render(message.Footer))
+		fmt.Println()
+		fmt.Println(m.styles.footer.Render(message.Footer))
 	}
 
-	// Display in a bordered box
-	fmt.Println(m.styles.border.Render(msgBuilder.String()))
+	fmt.Println(strings.Repeat("-", 50))
 	fmt.Println()
 
 	return nil
 }
 
-// PromptAction prompts the user to select an action.
+// PromptAction prompts the user to select an action using Bubble Tea.
 func (m *DefaultManager) PromptAction() (Action, error) {
-	var selected string
+	model := newActionSelectModel()
+	p := tea.NewProgram(model)
 
-	options := []huh.Option[string]{
-		huh.NewOption("✅ Accept - Commit with this message", "accept"),
-		huh.NewOption("✏️  Edit - Modify the message", "edit"),
-		huh.NewOption("🔄 Regenerate - Generate a new message", "regenerate"),
-		huh.NewOption("❌ Cancel - Abort without committing", "cancel"),
-	}
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("What would you like to do?").
-				Options(options...).
-				Value(&selected),
-		),
-	)
-
-	err := form.Run()
+	finalModel, err := p.Run()
 	if err != nil {
-		// If user pressed Ctrl+C or form was interrupted
-		return ActionCancel, nil
+		return ActionCancel, err
 	}
 
-	return m.mapSelectionToAction(selected), nil
+	result := finalModel.(actionSelectModel)
+	return result.selected, nil
 }
 
-// mapSelectionToAction maps a string selection to an Action enum.
-func (m *DefaultManager) mapSelectionToAction(selection string) Action {
-	switch selection {
-	case "accept":
-		return ActionAccept
-	case "edit":
-		return ActionEdit
-	case "regenerate":
-		return ActionRegenerate
-	case "cancel":
-		return ActionCancel
-	default:
-		return ActionCancel
+// actionSelectModel is the Bubble Tea model for action selection.
+type actionSelectModel struct {
+	choices  []actionChoice
+	cursor   int
+	selected Action
+	done     bool
+}
+
+type actionChoice struct {
+	action Action
+	label  string
+	icon   string
+	desc   string
+}
+
+func newActionSelectModel() actionSelectModel {
+	return actionSelectModel{
+		choices: []actionChoice{
+			{ActionAccept, "Accept", "✅", "Commit with this message"},
+			{ActionEdit, "Edit", "✏️ ", "Modify the message"},
+			{ActionRegenerate, "Regenerate", "🔄", "Generate a new message"},
+			{ActionCancel, "Cancel", "❌", "Abort without committing"},
+		},
+		cursor:   0,
+		selected: ActionCancel,
 	}
+}
+
+func (m actionSelectModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m actionSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			m.selected = ActionCancel
+			m.done = true
+			return m, tea.Quit
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < len(m.choices)-1 {
+				m.cursor++
+			}
+		case "enter", " ":
+			m.selected = m.choices[m.cursor].action
+			m.done = true
+			return m, tea.Quit
+		case "1":
+			m.selected = ActionAccept
+			m.done = true
+			return m, tea.Quit
+		case "2":
+			m.selected = ActionEdit
+			m.done = true
+			return m, tea.Quit
+		case "3":
+			m.selected = ActionRegenerate
+			m.done = true
+			return m, tea.Quit
+		case "4":
+			m.selected = ActionCancel
+			m.done = true
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m actionSelectModel) View() string {
+	if m.done {
+		return ""
+	}
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("39"))
+
+	selectedStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("212"))
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	descStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245"))
+
+	var sb strings.Builder
+	sb.WriteString(titleStyle.Render("What would you like to do?"))
+	sb.WriteString("\n\n")
+
+	for i, choice := range m.choices {
+		cursor := "  "
+		style := normalStyle
+		if m.cursor == i {
+			cursor = "▸ "
+			style = selectedStyle
+		}
+
+		line := fmt.Sprintf("%s%s %s", cursor, choice.icon, style.Render(choice.label))
+		sb.WriteString(line)
+		sb.WriteString(descStyle.Render(fmt.Sprintf(" - %s", choice.desc)))
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(descStyle.Render("↑/↓ or j/k to move • Enter to select • 1-4 quick select • q to cancel"))
+
+	return sb.String()
 }
 
 // EditMessage opens an editor for the user to modify the commit message.
@@ -384,11 +480,12 @@ func (m *DefaultManager) parseEditedMessage(edited string) *ai.GenerateResponse 
 
 // ShowSpinner creates and returns a spinner for loading states.
 func (m *DefaultManager) ShowSpinner(text string) Spinner {
-	return &defaultSpinner{
-		text:    text,
-		running: false,
-		done:    make(chan struct{}),
-	}
+	return newBubbleSpinner(text)
+}
+
+// ShowProgressSpinner creates a spinner with progress tracking.
+func (m *DefaultManager) ShowProgressSpinner(text string, total int) ProgressSpinner {
+	return newBubbleProgressSpinner(text, total)
 }
 
 // ShowError displays an error message to the user.
@@ -401,6 +498,99 @@ func (m *DefaultManager) ShowError(err error) {
 	fmt.Println()
 }
 
+// PromptConfirm prompts the user for a yes/no confirmation using Bubble Tea.
+func (m *DefaultManager) PromptConfirm(message string) (bool, error) {
+	model := newConfirmModel(message)
+	p := tea.NewProgram(model)
+
+	finalModel, err := p.Run()
+	if err != nil {
+		return false, err
+	}
+
+	result := finalModel.(confirmModel)
+	return result.confirmed, nil
+}
+
+// confirmModel is the Bubble Tea model for yes/no confirmation.
+type confirmModel struct {
+	message   string
+	cursor    int // 0 = Yes, 1 = No
+	confirmed bool
+	done      bool
+}
+
+func newConfirmModel(message string) confirmModel {
+	return confirmModel{
+		message: message,
+		cursor:  0, // Default to Yes
+	}
+}
+
+func (m confirmModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q", "n":
+			m.confirmed = false
+			m.done = true
+			return m, tea.Quit
+		case "y", "Y":
+			m.confirmed = true
+			m.done = true
+			return m, tea.Quit
+		case "left", "h":
+			m.cursor = 0
+		case "right", "l":
+			m.cursor = 1
+		case "enter", " ":
+			m.confirmed = m.cursor == 0
+			m.done = true
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m confirmModel) View() string {
+	if m.done {
+		return ""
+	}
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("220"))
+
+	selectedStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("42"))
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245"))
+
+	var sb strings.Builder
+	sb.WriteString(titleStyle.Render(m.message))
+	sb.WriteString(" ")
+
+	yesStyle := normalStyle
+	noStyle := normalStyle
+	if m.cursor == 0 {
+		yesStyle = selectedStyle
+	} else {
+		noStyle = selectedStyle
+	}
+
+	sb.WriteString(yesStyle.Render("[Y]es"))
+	sb.WriteString(" / ")
+	sb.WriteString(noStyle.Render("[N]o"))
+
+	return sb.String()
+}
+
 // ShowSuccess displays a success message to the user.
 func (m *DefaultManager) ShowSuccess(message string) {
 	fmt.Println()
@@ -408,58 +598,297 @@ func (m *DefaultManager) ShowSuccess(message string) {
 	fmt.Println()
 }
 
-// defaultSpinner implements the Spinner interface.
-type defaultSpinner struct {
+// bubbleSpinner implements Spinner using Bubble Tea.
+type bubbleSpinner struct {
 	text    string
-	running bool
-	done    chan struct{}
+	program *tea.Program
+	model   *spinnerModel
+	mu      sync.Mutex
 }
 
-// spinnerFrames contains the animation frames for the spinner.
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+// spinnerModel is the Bubble Tea model for simple spinner.
+type spinnerModel struct {
+	spinner  spinner.Model
+	text     string
+	quitting bool
+}
 
-// Start begins the spinner animation.
-func (s *defaultSpinner) Start() {
-	if s.running {
-		return
+// spinnerTickMsg is sent to update spinner text from outside.
+type spinnerTickMsg struct {
+	text string
+}
+
+// spinnerQuitMsg signals the spinner to quit.
+type spinnerQuitMsg struct{}
+
+func (m spinnerModel) Init() tea.Cmd {
+	return m.spinner.Tick
+}
+
+func (m spinnerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case spinnerTickMsg:
+		m.text = msg.text
+		return m, nil
+	case spinnerQuitMsg:
+		m.quitting = true
+		return m, tea.Quit
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 	}
-	s.running = true
-	s.done = make(chan struct{})
+	return m, nil
+}
 
+func (m spinnerModel) View() string {
+	if m.quitting {
+		return ""
+	}
+	return fmt.Sprintf("%s %s", m.spinner.View(), m.text)
+}
+
+func newBubbleSpinner(text string) *bubbleSpinner {
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
+	model := &spinnerModel{
+		spinner: s,
+		text:    text,
+	}
+
+	return &bubbleSpinner{
+		text:  text,
+		model: model,
+	}
+}
+
+func (s *bubbleSpinner) Start() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.program = tea.NewProgram(s.model)
 	go func() {
-		frameIdx := 0
-		ticker := time.NewTicker(80 * time.Millisecond)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-s.done:
-				// Clear the spinner line
-				fmt.Print("\r\033[K")
-				return
-			case <-ticker.C:
-				frame := spinnerFrames[frameIdx%len(spinnerFrames)]
-				fmt.Printf("\r%s %s", frame, s.text)
-				frameIdx++
-			}
-		}
+		_, _ = s.program.Run()
 	}()
 }
 
-// Stop stops the spinner animation.
-func (s *defaultSpinner) Stop() {
-	if !s.running {
-		return
+func (s *bubbleSpinner) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.program != nil {
+		s.program.Send(spinnerQuitMsg{})
+		time.Sleep(50 * time.Millisecond)
 	}
-	s.running = false
-	close(s.done)
-	// Give the goroutine time to clean up
-	time.Sleep(100 * time.Millisecond)
 }
 
-// UpdateText updates the spinner text.
-func (s *defaultSpinner) UpdateText(text string) {
+func (s *bubbleSpinner) UpdateText(text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.text = text
+	if s.program != nil {
+		s.program.Send(spinnerTickMsg{text: text})
+	}
+}
+
+// bubbleProgressSpinner implements ProgressSpinner using Bubble Tea.
+type bubbleProgressSpinner struct {
+	text        string
+	total       int
+	current     int
+	currentFile string
+	program     *tea.Program
+	mu          sync.Mutex
+}
+
+// progressModel is the Bubble Tea model for progress spinner.
+type progressModel struct {
+	spinner     spinner.Model
+	progress    progress.Model
+	text        string
+	total       int
+	current     int
+	currentFile string
+	quitting    bool
+}
+
+// progressUpdateMsg updates progress state.
+type progressUpdateMsg struct {
+	current     int
+	total       int
+	text        string
+	currentFile string
+}
+
+// progressQuitMsg signals quit.
+type progressQuitMsg struct{}
+
+func (m progressModel) Init() tea.Cmd {
+	return m.spinner.Tick
+}
+
+func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case progressUpdateMsg:
+		m.current = msg.current
+		m.total = msg.total
+		if msg.text != "" {
+			m.text = msg.text
+		}
+		m.currentFile = msg.currentFile
+		return m, nil
+	case progressQuitMsg:
+		m.quitting = true
+		return m, tea.Quit
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	case progress.FrameMsg:
+		progressModel, cmd := m.progress.Update(msg)
+		m.progress = progressModel.(progress.Model)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m progressModel) View() string {
+	if m.quitting {
+		return ""
+	}
+
+	// Calculate percentage
+	percent := 0.0
+	if m.total > 0 {
+		percent = float64(m.current) / float64(m.total)
+	}
+
+	// Build the view
+	var sb strings.Builder
+	sb.WriteString(m.spinner.View())
+	sb.WriteString(" ")
+	sb.WriteString(m.progress.ViewAs(percent))
+	sb.WriteString(fmt.Sprintf(" %d/%d ", m.current, m.total))
+	sb.WriteString(m.text)
+
+	if m.currentFile != "" {
+		file := m.currentFile
+		if len(file) > 25 {
+			file = "..." + file[len(file)-22:]
+		}
+		sb.WriteString(" → ")
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render(file))
+	}
+
+	return sb.String()
+}
+
+func newBubbleProgressSpinner(text string, total int) *bubbleProgressSpinner {
+	return &bubbleProgressSpinner{
+		text:  text,
+		total: total,
+	}
+}
+
+func (s *bubbleProgressSpinner) Start() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
+	prog := progress.New(
+		progress.WithDefaultGradient(),
+		progress.WithWidth(20),
+		progress.WithoutPercentage(),
+	)
+
+	model := progressModel{
+		spinner:  sp,
+		progress: prog,
+		text:     s.text,
+		total:    s.total,
+		current:  0,
+	}
+
+	s.program = tea.NewProgram(model)
+	go func() {
+		_, _ = s.program.Run()
+	}()
+}
+
+func (s *bubbleProgressSpinner) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.program != nil {
+		s.program.Send(progressQuitMsg{})
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (s *bubbleProgressSpinner) UpdateText(text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.text = text
+	if s.program != nil {
+		s.program.Send(progressUpdateMsg{
+			current:     s.current,
+			total:       s.total,
+			text:        text,
+			currentFile: s.currentFile,
+		})
+	}
+}
+
+func (s *bubbleProgressSpinner) SetTotal(total int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.total = total
+	if s.program != nil {
+		s.program.Send(progressUpdateMsg{
+			current:     s.current,
+			total:       total,
+			text:        s.text,
+			currentFile: s.currentFile,
+		})
+	}
+}
+
+func (s *bubbleProgressSpinner) SetCurrent(current int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.current = current
+	if s.program != nil {
+		s.program.Send(progressUpdateMsg{
+			current:     current,
+			total:       s.total,
+			text:        s.text,
+			currentFile: s.currentFile,
+		})
+	}
+}
+
+func (s *bubbleProgressSpinner) SetCurrentFile(file string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.currentFile = file
+	if s.program != nil {
+		s.program.Send(progressUpdateMsg{
+			current:     s.current,
+			total:       s.total,
+			text:        s.text,
+			currentFile: file,
+		})
+	}
 }
 
 // NonInteractiveManager implements Manager for non-interactive mode (--yes flag).
@@ -559,6 +988,11 @@ func (m *NonInteractiveManager) ShowSpinner(text string) Spinner {
 	return &noopSpinner{}
 }
 
+// ShowProgressSpinner returns a no-op progress spinner in non-interactive mode.
+func (m *NonInteractiveManager) ShowProgressSpinner(text string, total int) ProgressSpinner {
+	return &noopProgressSpinner{}
+}
+
 // ShowError displays an error message.
 func (m *NonInteractiveManager) ShowError(err error) {
 	if err == nil {
@@ -572,9 +1006,24 @@ func (m *NonInteractiveManager) ShowSuccess(message string) {
 	fmt.Println(message)
 }
 
+// PromptConfirm always returns true in non-interactive mode.
+func (m *NonInteractiveManager) PromptConfirm(message string) (bool, error) {
+	return true, nil
+}
+
 // noopSpinner is a no-op implementation of Spinner.
 type noopSpinner struct{}
 
 func (s *noopSpinner) Start()            {}
 func (s *noopSpinner) Stop()             {}
 func (s *noopSpinner) UpdateText(string) {}
+
+// noopProgressSpinner is a no-op implementation of ProgressSpinner.
+type noopProgressSpinner struct{}
+
+func (s *noopProgressSpinner) Start()                {}
+func (s *noopProgressSpinner) Stop()                 {}
+func (s *noopProgressSpinner) UpdateText(string)     {}
+func (s *noopProgressSpinner) SetTotal(int)          {}
+func (s *noopProgressSpinner) SetCurrent(int)        {}
+func (s *noopProgressSpinner) SetCurrentFile(string) {}

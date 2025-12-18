@@ -118,7 +118,8 @@ func (p *OpenAIProvider) GenerateCommitMessage(ctx context.Context, req *Generat
 		return nil, errors.New("request cannot be nil")
 	}
 
-	if len(req.DiffChunks) == 0 {
+	// Allow empty DiffChunks if CustomPrompt is provided (for summary-based generation)
+	if len(req.DiffChunks) == 0 && req.CustomPrompt == "" {
 		return nil, errors.New("no diff chunks provided")
 	}
 

@@ -72,6 +72,8 @@ type Client interface {
 	GetDiffStats(ctx context.Context) (*DiffStats, error)
 	Commit(ctx context.Context, message string) error
 	HasStagedChanges(ctx context.Context) (bool, error)
+	HasUnstagedChanges(ctx context.Context) (bool, error)
+	AddAll(ctx context.Context) error
 }
 
 // DefaultClient implements the Client interface using exec.CommandContext.
@@ -233,6 +235,49 @@ func (c *DefaultClient) Commit(ctx context.Context, message string) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
+	if c.workDir != "" {
+		cmd.Dir = c.workDir
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return apperrors.NewTimeoutError(ctx.Err())
+		}
+		return apperrors.NewGitError(err, string(output))
+	}
+	return nil
+}
+
+// HasUnstagedChanges checks if there are any unstaged changes (modified/untracked files).
+func (c *DefaultClient) HasUnstagedChanges(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, GitCommandTimeout)
+	defer cancel()
+
+	// Check for modified files (not staged)
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	if c.workDir != "" {
+		cmd.Dir = c.workDir
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return false, apperrors.NewTimeoutError(ctx.Err())
+		}
+		return false, apperrors.NewGitError(err, "")
+	}
+
+	// If there's any output, there are changes
+	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
+// AddAll stages all changes (git add .).
+func (c *DefaultClient) AddAll(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, GitCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "add", ".")
 	if c.workDir != "" {
 		cmd.Dir = c.workDir
 	}

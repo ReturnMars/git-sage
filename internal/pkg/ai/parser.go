@@ -222,10 +222,10 @@ func ValidateCommitMessage(rawText string) []string {
 		issues = append(issues, "missing commit subject")
 	}
 
-	// Check subject length (warning threshold is 72 chars)
+	// Check subject length (warning threshold is 100 chars for Chinese support)
 	subjectLine := parsed.FormatSubject()
-	if len(subjectLine) > 72 {
-		issues = append(issues, "subject line exceeds 72 characters")
+	if len(subjectLine) > 100 {
+		issues = append(issues, "subject line exceeds 100 characters")
 	}
 
 	return issues
