@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"testing"
 )
 
@@ -224,7 +225,7 @@ func TestDeepSeekProvider_GenerateCommitMessage_NilRequest(t *testing.T) {
 		t.Fatalf("NewDeepSeekProvider() error = %v", err)
 	}
 
-	_, err = provider.GenerateCommitMessage(nil, nil)
+	_, err = provider.GenerateCommitMessage(context.TODO(), nil)
 	if err == nil {
 		t.Error("GenerateCommitMessage() should return error for nil request")
 	}
@@ -244,7 +245,7 @@ func TestDeepSeekProvider_GenerateCommitMessage_EmptyDiffChunks(t *testing.T) {
 		DiffChunks: nil,
 	}
 
-	_, err = provider.GenerateCommitMessage(nil, req)
+	_, err = provider.GenerateCommitMessage(context.TODO(), req)
 	if err == nil {
 		t.Error("GenerateCommitMessage() should return error for empty diff chunks")
 	}

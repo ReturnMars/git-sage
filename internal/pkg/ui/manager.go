@@ -152,7 +152,7 @@ func (m *DefaultManager) DisplayMessage(message *ai.GenerateResponse) error {
 	}
 
 	fmt.Println()
-	fmt.Println(m.styles.title.Render("📝 Generated Commit Message"))
+	fmt.Println(m.styles.title.Render("Generated Commit Message"))
 	fmt.Println(strings.Repeat("-", 50))
 
 	// Subject line
@@ -216,10 +216,10 @@ type actionChoice struct {
 func newActionSelectModel() actionSelectModel {
 	return actionSelectModel{
 		choices: []actionChoice{
-			{ActionAccept, "Accept", "✅", "Commit with this message"},
-			{ActionEdit, "Edit", "✏️ ", "Modify the message"},
-			{ActionRegenerate, "Regenerate", "🔄", "Generate a new message"},
-			{ActionCancel, "Cancel", "❌", "Abort without committing"},
+			{ActionAccept, "Accept", "›", "Commit with this message"},
+			{ActionEdit, "Edit", "•", "Modify the message"},
+			{ActionRegenerate, "Regenerate", "↻", "Generate a new message"},
+			{ActionCancel, "Cancel", "×", "Abort without committing"},
 		},
 		cursor:   0,
 		selected: ActionCancel,
@@ -433,7 +433,7 @@ func (m *DefaultManager) editWithInlineEditor(content string) (string, error) {
 		huh.NewGroup(
 			huh.NewText().
 				Title("Edit Commit Message").
-				Description("Modify the message below. First line is the subject.").
+				Description("Edit below. Press Ctrl+D or Tab then Enter to save. Ctrl+C or Esc to cancel.").
 				Value(&edited).
 				CharLimit(0), // No limit
 		),
@@ -494,7 +494,7 @@ func (m *DefaultManager) ShowError(err error) {
 		return
 	}
 	fmt.Println()
-	fmt.Println(m.styles.errorStyle.Render("❌ Error: " + err.Error()))
+	fmt.Println(m.styles.errorStyle.Render("Error: " + err.Error()))
 	fmt.Println()
 }
 
@@ -594,7 +594,7 @@ func (m confirmModel) View() string {
 // ShowSuccess displays a success message to the user.
 func (m *DefaultManager) ShowSuccess(message string) {
 	fmt.Println()
-	fmt.Println(m.styles.success.Render("✅ " + message))
+	fmt.Println(m.styles.success.Render("[OK] " + message))
 	fmt.Println()
 }
 

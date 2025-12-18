@@ -602,6 +602,56 @@ func (s *CommitService) handleAccept(
 	}
 
 	s.uiManager.ShowSuccess("Successfully committed!")
+
+	// Ask if user wants to push to remote
+	hasRemote, err := s.gitClient.HasRemote(ctx)
+	if err != nil {
+		// Ignore error, just skip push prompt
+		return nil
+	}
+	if !hasRemote {
+		return nil
+	}
+
+	confirmed, err := s.uiManager.PromptConfirm("Push to remote repository?")
+	if err != nil || !confirmed {
+		return nil
+	}
+
+	// First pull to sync with remote
+	pullSpinner := s.uiManager.ShowSpinner("Pulling from remote...")
+	pullSpinner.Start()
+
+	pullResult, err := s.gitClient.Pull(ctx)
+	pullSpinner.Stop()
+
+	if err != nil {
+		s.uiManager.ShowError(fmt.Errorf("failed to pull: %w", err))
+		return nil
+	}
+
+	// If there were updates, inform user and ask to continue
+	if pullResult.Updated {
+		s.uiManager.ShowSuccess(fmt.Sprintf("Pulled %d file(s) from remote", pullResult.UpdatedFiles))
+
+		continueConfirmed, err := s.uiManager.PromptConfirm("Remote has updates. Continue with push?")
+		if err != nil || !continueConfirmed {
+			return nil
+		}
+	}
+
+	// Execute git push
+	pushSpinner := s.uiManager.ShowSpinner("Pushing to remote...")
+	pushSpinner.Start()
+
+	if err := s.gitClient.Push(ctx); err != nil {
+		pushSpinner.Stop()
+		s.uiManager.ShowError(fmt.Errorf("failed to push: %w", err))
+		return nil // Don't return error, commit was successful
+	}
+
+	pushSpinner.Stop()
+	s.uiManager.ShowSuccess("Pushed to remote!")
 	return nil
 }
 

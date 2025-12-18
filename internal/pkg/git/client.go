@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -74,6 +75,12 @@ type Client interface {
 	HasStagedChanges(ctx context.Context) (bool, error)
 	HasUnstagedChanges(ctx context.Context) (bool, error)
 	AddAll(ctx context.Context) error
+	Pull(ctx context.Context) (*PullResult, error)
+	Push(ctx context.Context) error
+	PushWithUpstream(ctx context.Context) error
+	HasRemote(ctx context.Context) (bool, error)
+	HasUpstream(ctx context.Context) (bool, error)
+	GetCurrentBranch(ctx context.Context) (string, error)
 }
 
 // DefaultClient implements the Client interface using exec.CommandContext.
@@ -290,6 +297,180 @@ func (c *DefaultClient) AddAll(ctx context.Context) error {
 		return apperrors.NewGitError(err, string(output))
 	}
 	return nil
+}
+
+// Push pushes commits to the remote repository.
+// If setUpstream is true and there's no upstream, it will set the upstream to origin/<branch>.
+func (c *DefaultClient) Push(ctx context.Context) error {
+	return c.pushInternal(ctx, false)
+}
+
+// PushWithUpstream pushes commits and sets the upstream tracking branch.
+func (c *DefaultClient) PushWithUpstream(ctx context.Context) error {
+	return c.pushInternal(ctx, true)
+}
+
+// pushInternal handles the actual push logic.
+func (c *DefaultClient) pushInternal(ctx context.Context, setUpstream bool) error {
+	// Use longer timeout for push (network operation)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	args := []string{"push"}
+	if setUpstream {
+		branch, err := c.GetCurrentBranch(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get current branch: %w", err)
+		}
+		args = append(args, "-u", "origin", branch)
+	}
+
+	cmd := exec.CommandContext(ctx, "git", args...)
+	if c.workDir != "" {
+		cmd.Dir = c.workDir
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return apperrors.NewTimeoutError(ctx.Err())
+		}
+		return apperrors.NewGitError(err, string(output))
+	}
+	return nil
+}
+
+// GetCurrentBranch returns the name of the current branch.
+func (c *DefaultClient) GetCurrentBranch(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, GitCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if c.workDir != "" {
+		cmd.Dir = c.workDir
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", apperrors.NewTimeoutError(ctx.Err())
+		}
+		return "", apperrors.NewGitError(err, "")
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
+// HasRemote checks if the repository has a remote configured.
+func (c *DefaultClient) HasRemote(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, GitCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "remote")
+	if c.workDir != "" {
+		cmd.Dir = c.workDir
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return false, apperrors.NewTimeoutError(ctx.Err())
+		}
+		return false, apperrors.NewGitError(err, "")
+	}
+
+	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
+// PullResult contains the result of a git pull operation.
+type PullResult struct {
+	Updated      bool   // Whether there were updates from remote
+	UpdatedFiles int    // Number of files updated
+	Message      string // Summary message
+	Skipped      bool   // Whether pull was skipped (no upstream)
+}
+
+// HasUpstream checks if the current branch has an upstream tracking branch.
+func (c *DefaultClient) HasUpstream(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, GitCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	if c.workDir != "" {
+		cmd.Dir = c.workDir
+	}
+
+	err := cmd.Run()
+	if err != nil {
+		// Exit code 128 means no upstream configured
+		return false, nil
+	}
+	return true, nil
+}
+
+// Pull pulls changes from the remote repository.
+func (c *DefaultClient) Pull(ctx context.Context) (*PullResult, error) {
+	// First check if there's an upstream branch
+	hasUpstream, _ := c.HasUpstream(ctx)
+	if !hasUpstream {
+		return &PullResult{
+			Skipped: true,
+			Message: "No upstream branch configured",
+		}, nil
+	}
+
+	// Use longer timeout for pull (network operation)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "pull", "--rebase")
+	if c.workDir != "" {
+		cmd.Dir = c.workDir
+	}
+
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, apperrors.NewTimeoutError(ctx.Err())
+		}
+		return nil, apperrors.NewGitError(err, outputStr)
+	}
+
+	result := &PullResult{
+		Message: strings.TrimSpace(outputStr),
+	}
+
+	// Check if there were updates
+	if strings.Contains(outputStr, "Already up to date") ||
+		strings.Contains(outputStr, "Already up-to-date") {
+		result.Updated = false
+	} else {
+		result.Updated = true
+		// Try to count updated files from output
+		lines := strings.Split(outputStr, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "file changed") || strings.Contains(line, "files changed") {
+				result.UpdatedFiles = countFilesChanged(line)
+				break
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// countFilesChanged extracts the number of files changed from git output.
+func countFilesChanged(line string) int {
+	// Format: "X file(s) changed, Y insertions(+), Z deletions(-)"
+	parts := strings.Fields(line)
+	if len(parts) > 0 {
+		var count int
+		fmt.Sscanf(parts[0], "%d", &count)
+		return count
+	}
+	return 0
 }
 
 // fileStat holds statistics for a single file from numstat.
