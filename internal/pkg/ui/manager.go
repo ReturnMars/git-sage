@@ -983,14 +983,14 @@ func (m *NonInteractiveManager) EditMessage(message *ai.GenerateResponse) (*ai.G
 	return message, nil
 }
 
-// ShowSpinner returns a simple text logger in non-interactive mode.
+// ShowSpinner returns an animated spinner even in non-interactive mode for progress visibility.
 func (m *NonInteractiveManager) ShowSpinner(text string) Spinner {
-	return &noopSpinner{text: text}
+	return newBubbleSpinner(text)
 }
 
-// ShowProgressSpinner returns a no-op progress spinner in non-interactive mode.
+// ShowProgressSpinner returns an animated progress spinner in non-interactive mode.
 func (m *NonInteractiveManager) ShowProgressSpinner(text string, total int) ProgressSpinner {
-	return &noopProgressSpinner{}
+	return newBubbleProgressSpinner(text, total)
 }
 
 // ShowError displays an error message.
