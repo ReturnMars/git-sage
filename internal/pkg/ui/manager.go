@@ -983,9 +983,9 @@ func (m *NonInteractiveManager) EditMessage(message *ai.GenerateResponse) (*ai.G
 	return message, nil
 }
 
-// ShowSpinner returns a no-op spinner in non-interactive mode.
+// ShowSpinner returns a simple text logger in non-interactive mode.
 func (m *NonInteractiveManager) ShowSpinner(text string) Spinner {
-	return &noopSpinner{}
+	return &noopSpinner{text: text}
 }
 
 // ShowProgressSpinner returns a no-op progress spinner in non-interactive mode.
@@ -1011,12 +1011,23 @@ func (m *NonInteractiveManager) PromptConfirm(message string) (bool, error) {
 	return true, nil
 }
 
-// noopSpinner is a no-op implementation of Spinner.
-type noopSpinner struct{}
+// noopSpinner represents a simple text-based spinner for non-interactive mode.
+type noopSpinner struct {
+	text string
+}
 
-func (s *noopSpinner) Start()            {}
-func (s *noopSpinner) Stop()             {}
-func (s *noopSpinner) UpdateText(string) {}
+func (s *noopSpinner) Start() {
+	if s.text != "" {
+		fmt.Println(s.text)
+	}
+}
+func (s *noopSpinner) Stop() {}
+func (s *noopSpinner) UpdateText(text string) {
+	s.text = text
+	if text != "" {
+		fmt.Println(text)
+	}
+}
 
 // noopProgressSpinner is a no-op implementation of ProgressSpinner.
 type noopProgressSpinner struct{}
