@@ -106,8 +106,8 @@ changelog:
 # Release configuration
 release:
   github:
-    owner: gitsage
-    name: gitsage
+    owner: ReturnMars
+    name: git-sage
   # Draft release for review before publishing
   draft: false
   # Mark as prerelease if version contains alpha/beta/rc
