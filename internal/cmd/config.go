@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/gitsage/gitsage/internal/pkg/config"
@@ -16,12 +19,13 @@ func NewConfigCmd() *cobra.Command {
 		Long: `Manage GitSage configuration settings.
 
 Use subcommands to initialize, view, or modify configuration values.
-Configuration is stored in ~/.gitsage.yaml by default.`,
+Configuration is stored in ~/.gitsage/config.yaml by default.`,
 	}
 
 	configCmd.AddCommand(newConfigInitCmd())
 	configCmd.AddCommand(newConfigSetCmd())
 	configCmd.AddCommand(newConfigListCmd())
+	configCmd.AddCommand(newConfigEditCmd())
 
 	return configCmd
 }
@@ -31,7 +35,7 @@ func newConfigInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Initialize configuration file",
-		Long: `Create a new configuration file at ~/.gitsage.yaml with default values.
+		Long: `Create a new configuration file at ~/.gitsage/config.yaml with default values.
 
 The configuration file will be created with permissions 0600 (user read/write only)
 for security, as it may contain API keys.`,
@@ -117,6 +121,47 @@ API keys are masked for security, showing only the last 4 characters.`,
 			settings := mgr.List()
 			printSettings("", settings)
 			return nil
+		},
+	}
+}
+
+// newConfigEditCmd creates the 'config edit' subcommand.
+func newConfigEditCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit",
+		Short: "Edit configuration file",
+		Long:  `Open the configuration file in your default editor.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			configPath, _ := cmd.Flags().GetString("config")
+			mgr, err := config.NewManager(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to create config manager: %w", err)
+			}
+
+			if !mgr.ConfigExists() {
+				return fmt.Errorf("config file not found at %s. Run 'gitsage config init' first", mgr.GetConfigPath())
+			}
+
+			path := mgr.GetConfigPath()
+			editor := os.Getenv("EDITOR")
+			if editor == "" {
+				editor = os.Getenv("VISUAL")
+			}
+			if editor == "" {
+				if runtime.GOOS == "windows" {
+					editor = "notepad"
+				} else {
+					editor = "vim"
+				}
+			}
+
+			fmt.Printf("Opening config file %s with %s...\n", path, editor)
+
+			c := exec.Command(editor, path)
+			c.Stdin = os.Stdin
+			c.Stdout = os.Stdout
+			c.Stderr = os.Stderr
+			return c.Run()
 		},
 	}
 }

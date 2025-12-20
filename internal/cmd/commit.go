@@ -91,9 +91,10 @@ func runCommit(cmd *cobra.Command, flags *CommitFlags) error {
 
 	// Check if config exists
 	if !cfgMgr.ConfigExists() {
-		fmt.Fprintln(os.Stderr, "No configuration file found.")
-		fmt.Fprintln(os.Stderr, "Run 'gitsage config init' to create one.")
-		return apperrors.NewInvalidConfigError("configuration not initialized")
+		// Launch interactive setup if config doesn't exist
+		if err := ui.RunInteractiveSetup(cfgMgr); err != nil {
+			return fmt.Errorf("setup failed: %w", err)
+		}
 	}
 
 	// Apply command-line flag overrides BEFORE loading config

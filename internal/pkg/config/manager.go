@@ -44,7 +44,7 @@ func NewManager(configPath string) (*ViperManager, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to get home directory: %w", err)
 		}
-		configPath = filepath.Join(homeDir, DefaultConfigFileName+"."+DefaultConfigFileExt)
+		configPath = filepath.Join(homeDir, ".gitsage", "config.yaml")
 	}
 
 	// Set config file path
