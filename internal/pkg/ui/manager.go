@@ -1010,31 +1010,3 @@ func (m *NonInteractiveManager) ShowSuccess(message string) {
 func (m *NonInteractiveManager) PromptConfirm(message string) (bool, error) {
 	return true, nil
 }
-
-// noopSpinner represents a simple text-based spinner for non-interactive mode.
-type noopSpinner struct {
-	text string
-}
-
-func (s *noopSpinner) Start() {
-	if s.text != "" {
-		fmt.Println(s.text)
-	}
-}
-func (s *noopSpinner) Stop() {}
-func (s *noopSpinner) UpdateText(text string) {
-	s.text = text
-	if text != "" {
-		fmt.Println(text)
-	}
-}
-
-// noopProgressSpinner is a no-op implementation of ProgressSpinner.
-type noopProgressSpinner struct{}
-
-func (s *noopProgressSpinner) Start()                {}
-func (s *noopProgressSpinner) Stop()                 {}
-func (s *noopProgressSpinner) UpdateText(string)     {}
-func (s *noopProgressSpinner) SetTotal(int)          {}
-func (s *noopProgressSpinner) SetCurrent(int)        {}
-func (s *noopProgressSpinner) SetCurrentFile(string) {}

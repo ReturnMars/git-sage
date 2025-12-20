@@ -226,16 +226,50 @@ func TestNonInteractiveManager(t *testing.T) {
 		}
 	})
 
-	t.Run("ShowSpinner returns noop spinner", func(t *testing.T) {
+	t.Run("ShowSpinner returns animated spinner", func(t *testing.T) {
 		m := NewNonInteractiveManager(true)
 		spinner := m.ShowSpinner("test")
 		if spinner == nil {
 			t.Error("ShowSpinner() returned nil")
 		}
+		// Verify it's an animated spinner (bubbleSpinner), not a noop
+		if _, ok := spinner.(*bubbleSpinner); !ok {
+			t.Errorf("ShowSpinner() should return *bubbleSpinner, got %T", spinner)
+		}
 		// These should not panic
 		spinner.Start()
 		spinner.UpdateText("new text")
 		spinner.Stop()
+	})
+
+	t.Run("ShowProgressSpinner returns animated progress spinner", func(t *testing.T) {
+		m := NewNonInteractiveManager(true)
+		spinner := m.ShowProgressSpinner("test", 10)
+		if spinner == nil {
+			t.Error("ShowProgressSpinner() returned nil")
+		}
+		// Verify it's an animated progress spinner
+		if _, ok := spinner.(*bubbleProgressSpinner); !ok {
+			t.Errorf("ShowProgressSpinner() should return *bubbleProgressSpinner, got %T", spinner)
+		}
+		// These should not panic
+		spinner.Start()
+		spinner.SetTotal(20)
+		spinner.SetCurrent(5)
+		spinner.SetCurrentFile("test.go")
+		spinner.UpdateText("new text")
+		spinner.Stop()
+	})
+
+	t.Run("PromptConfirm always returns true", func(t *testing.T) {
+		m := NewNonInteractiveManager(true)
+		confirmed, err := m.PromptConfirm("Are you sure?")
+		if err != nil {
+			t.Errorf("PromptConfirm() error = %v", err)
+		}
+		if !confirmed {
+			t.Error("PromptConfirm() should always return true in non-interactive mode")
+		}
 	})
 }
 
