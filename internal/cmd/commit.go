@@ -159,13 +159,9 @@ func runCommit(cmd *cobra.Command, flags *CommitFlags) error {
 		DiffSizeThreshold: cfg.Git.DiffSizeThreshold,
 	})
 
-	// Create UI manager based on --yes flag
-	var uiMgr ui.Manager
-	if flags.Yes {
-		uiMgr = ui.NewNonInteractiveManager(cfg.UI.ColorEnabled)
-	} else {
-		uiMgr = ui.NewDefaultManager(cfg.UI.ColorEnabled, cfg.UI.Editor)
-	}
+	// Create UI manager - always use DefaultManager for consistent UI experience
+	// The --yes flag controls auto-accept behavior, not the UI style
+	uiMgr := ui.NewDefaultManager(cfg.UI.ColorEnabled, cfg.UI.Editor, flags.Yes)
 
 	// Create history manager
 	var historyMgr history.Manager

@@ -29,7 +29,7 @@ func TestActionString(t *testing.T) {
 }
 
 func TestFormatMessageForEdit(t *testing.T) {
-	m := NewDefaultManager(true, "")
+	m := NewDefaultManager(true, "", false)
 
 	tests := []struct {
 		name     string
@@ -80,7 +80,7 @@ func TestFormatMessageForEdit(t *testing.T) {
 }
 
 func TestParseEditedMessage(t *testing.T) {
-	m := NewDefaultManager(true, "")
+	m := NewDefaultManager(true, "", false)
 
 	tests := []struct {
 		name            string
@@ -162,7 +162,7 @@ func TestGetEditor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := NewDefaultManager(true, tt.configEditor)
+			m := NewDefaultManager(true, tt.configEditor, false)
 			got := m.getEditor()
 			if tt.configEditor != "" && got != tt.expectedEditor {
 				t.Errorf("getEditor() = %q, want %q", got, tt.expectedEditor)
@@ -173,7 +173,7 @@ func TestGetEditor(t *testing.T) {
 
 func TestNewDefaultManager(t *testing.T) {
 	t.Run("with colors enabled", func(t *testing.T) {
-		m := NewDefaultManager(true, "vim")
+		m := NewDefaultManager(true, "vim", false)
 		if m == nil {
 			t.Fatal("NewDefaultManager returned nil")
 		}
@@ -189,7 +189,7 @@ func TestNewDefaultManager(t *testing.T) {
 	})
 
 	t.Run("with colors disabled", func(t *testing.T) {
-		m := NewDefaultManager(false, "")
+		m := NewDefaultManager(false, "", false)
 		if m == nil {
 			t.Fatal("NewDefaultManager returned nil")
 		}
@@ -275,7 +275,7 @@ func TestNonInteractiveManager(t *testing.T) {
 
 func TestDefaultSpinner(t *testing.T) {
 	t.Run("Start and Stop", func(t *testing.T) {
-		m := NewDefaultManager(true, "")
+		m := NewDefaultManager(true, "", false)
 		spinner := m.ShowSpinner("Loading...")
 
 		// Start spinner
@@ -289,7 +289,7 @@ func TestDefaultSpinner(t *testing.T) {
 	})
 
 	t.Run("Double Start should not panic", func(t *testing.T) {
-		m := NewDefaultManager(true, "")
+		m := NewDefaultManager(true, "", false)
 		spinner := m.ShowSpinner("Loading...")
 		spinner.Start()
 		spinner.Start() // Should not panic
@@ -297,7 +297,7 @@ func TestDefaultSpinner(t *testing.T) {
 	})
 
 	t.Run("Double Stop should not panic", func(t *testing.T) {
-		m := NewDefaultManager(true, "")
+		m := NewDefaultManager(true, "", false)
 		spinner := m.ShowSpinner("Loading...")
 		spinner.Start()
 		spinner.Stop()
@@ -306,7 +306,7 @@ func TestDefaultSpinner(t *testing.T) {
 }
 
 func TestDisplayMessageNilError(t *testing.T) {
-	m := NewDefaultManager(true, "")
+	m := NewDefaultManager(true, "", false)
 	err := m.DisplayMessage(nil)
 	if err == nil {
 		t.Error("DisplayMessage(nil) should return an error")
@@ -314,7 +314,7 @@ func TestDisplayMessageNilError(t *testing.T) {
 }
 
 func TestEditMessageNilError(t *testing.T) {
-	m := NewDefaultManager(true, "")
+	m := NewDefaultManager(true, "", false)
 	_, err := m.EditMessage(nil)
 	if err == nil {
 		t.Error("EditMessage(nil) should return an error")
@@ -322,7 +322,7 @@ func TestEditMessageNilError(t *testing.T) {
 }
 
 func TestShowErrorNil(t *testing.T) {
-	m := NewDefaultManager(true, "")
+	m := NewDefaultManager(true, "", false)
 	// Should not panic
 	m.ShowError(nil)
 }

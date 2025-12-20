@@ -75,6 +75,7 @@ type Manager interface {
 type DefaultManager struct {
 	colorEnabled bool
 	editor       string
+	autoAccept   bool
 	styles       *styles
 }
 
@@ -91,10 +92,12 @@ type styles struct {
 }
 
 // NewDefaultManager creates a new DefaultManager with the specified options.
-func NewDefaultManager(colorEnabled bool, editor string) *DefaultManager {
+// If autoAccept is true, prompts will automatically accept without user input.
+func NewDefaultManager(colorEnabled bool, editor string, autoAccept bool) *DefaultManager {
 	m := &DefaultManager{
 		colorEnabled: colorEnabled,
 		editor:       editor,
+		autoAccept:   autoAccept,
 	}
 	m.initStyles()
 	return m
@@ -185,7 +188,12 @@ func (m *DefaultManager) DisplayMessage(message *ai.GenerateResponse) error {
 }
 
 // PromptAction prompts the user to select an action using Bubble Tea.
+// If autoAccept is enabled, returns ActionAccept immediately.
 func (m *DefaultManager) PromptAction() (Action, error) {
+	if m.autoAccept {
+		return ActionAccept, nil
+	}
+
 	model := newActionSelectModel()
 	p := tea.NewProgram(model)
 
@@ -499,7 +507,12 @@ func (m *DefaultManager) ShowError(err error) {
 }
 
 // PromptConfirm prompts the user for a yes/no confirmation using Bubble Tea.
+// If autoAccept is enabled, returns true immediately.
 func (m *DefaultManager) PromptConfirm(message string) (bool, error) {
+	if m.autoAccept {
+		return true, nil
+	}
+
 	model := newConfirmModel(message)
 	p := tea.NewProgram(model)
 
