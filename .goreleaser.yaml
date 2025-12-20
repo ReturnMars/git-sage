@@ -47,11 +47,13 @@ builds:
 # Archive configuration
 archives:
   - id: default
-    format: tar.gz
+    formats:
+      - tar.gz
     # Use zip for Windows
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
     # Archive naming template
     name_template: >-
       {{ .ProjectName }}_
@@ -139,8 +141,8 @@ source:
   name_template: "{{ .ProjectName }}_{{ .Version }}_source"
 
 # SBOM (Software Bill of Materials)
-sboms:
-  - artifacts: archive
+# sboms:
+#   - artifacts: archive
 
 # Signing (optional - uncomment to enable)
 # signs:

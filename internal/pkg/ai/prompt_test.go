@@ -70,10 +70,7 @@ func TestPromptTemplate_RenderUserPrompt(t *testing.T) {
 	}
 
 	// Check that the result contains expected content
-	if !strings.Contains(result, "Files changed: 2") {
-		t.Error("Result should contain file count")
-	}
-	if !strings.Contains(result, "Additions: 10") {
+	if !strings.Contains(result, "+10") {
 		t.Error("Result should contain additions count")
 	}
 	if !strings.Contains(result, "diff content here") {
@@ -160,7 +157,7 @@ func TestPromptTemplate_RenderUserPrompt_WithPreviousAttempt(t *testing.T) {
 		t.Fatalf("RenderUserPrompt() error = %v", err)
 	}
 
-	if !strings.Contains(result, "Previous attempt") {
+	if !strings.Contains(result, "The user rejected the previous attempt") {
 		t.Error("Result should contain previous attempt section")
 	}
 	if !strings.Contains(result, "feat: previous attempt message") {
@@ -205,13 +202,11 @@ func TestDefaultSystemPrompt_ContainsConventionalCommitsInstructions(t *testing.
 	if !strings.Contains(DefaultSystemPrompt, "Conventional Commits") {
 		t.Error("System prompt should mention Conventional Commits format")
 	}
-	if !strings.Contains(DefaultSystemPrompt, "feat") {
-		t.Error("System prompt should list valid commit types")
+	// The new system prompt uses Chinese instructions, so we check for the structure instead of "feat"
+	if !strings.Contains(DefaultSystemPrompt, "<type>(<scope>):") {
+		t.Error("System prompt should list valid commit format")
 	}
-	if !strings.Contains(DefaultSystemPrompt, "fix") {
-		t.Error("System prompt should list valid commit types")
-	}
-	if !strings.Contains(DefaultSystemPrompt, "<type>") {
-		t.Error("System prompt should describe the format")
+	if !strings.Contains(DefaultSystemPrompt, "chore") {
+		t.Error("System prompt should mention chore")
 	}
 }

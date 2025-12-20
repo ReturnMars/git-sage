@@ -299,6 +299,7 @@ func TestOllamaProvider_GenerateCommitMessage_Success(t *testing.T) {
 				Content:    "+// new comment",
 			},
 		},
+		DiffStats: &git.DiffStats{},
 	}
 
 	resp, err := provider.GenerateCommitMessage(context.Background(), req)

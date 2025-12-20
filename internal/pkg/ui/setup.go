@@ -59,7 +59,7 @@ func RunInteractiveSetup(cfgMgr *config.ViperManager) error {
 				Title("API Key").
 				Description("Enter your API key").
 				Value(&apiKey).
-				Password(true).
+				EchoMode(huh.EchoModePassword).
 				Validate(func(s string) error {
 					if len(strings.TrimSpace(s)) < 5 {
 						return fmt.Errorf("api key too short")

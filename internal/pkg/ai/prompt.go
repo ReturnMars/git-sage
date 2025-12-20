@@ -52,9 +52,14 @@ feat(user, ui): 扩展用户信息模型并同步前端展示
 // DefaultUserPromptTemplate uses a "Content-First" strategy to help local models focus on logic.
 const DefaultUserPromptTemplate = `Analyze the code changes below and write the commit message.
 
+{{if .PreviousAttempt}}
+> Note: The user rejected the previous attempt. Please improve upon this:
+{{.PreviousAttempt}}
+{{end}}
+
 [[CODE CHANGES / DIFF]]
 {{if .RequiresChunking}}
-> Note: Diff is too large. Summarized file list:
+> Note: Diff is too large. Summary of changes:
 {{range .Chunks}}
 - {{.FilePath}} ({{.ChangeType}})
 {{end}}
