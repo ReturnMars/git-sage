@@ -6,13 +6,13 @@ import (
 
 func TestNewCommitMessage(t *testing.T) {
 	tests := []struct {
-		name     string
-		rawText  string
-		wantType string
-		wantScope string
+		name        string
+		rawText     string
+		wantType    string
+		wantScope   string
 		wantSubject string
-		wantBody string
-		wantFooter string
+		wantBody    string
+		wantFooter  string
 	}{
 		{
 			name:        "simple feat commit",
@@ -243,7 +243,7 @@ func TestCommitMessage_ValidateWithWarnings(t *testing.T) {
 			name: "valid but long subject",
 			cm: &CommitMessage{
 				Type:    "feat",
-				Subject: "this is a very long subject line that exceeds the recommended 72 character limit",
+				Subject: "this is a very long subject line that exceeds the recommended 100 character limit for commit messages",
 			},
 			wantValid:    true,
 			wantErrors:   0,
@@ -259,8 +259,8 @@ func TestCommitMessage_ValidateWithWarnings(t *testing.T) {
 			wantErrors: 1,
 		},
 		{
-			name: "missing type and subject",
-			cm:   &CommitMessage{},
+			name:       "missing type and subject",
+			cm:         &CommitMessage{},
 			wantValid:  false,
 			wantErrors: 2,
 		},
@@ -316,7 +316,7 @@ func TestCommitMessage_SubjectExceedsLength(t *testing.T) {
 			name: "exactly 72 chars",
 			cm: &CommitMessage{
 				Type:    "feat",
-				Subject: "this subject is exactly sixty-six characters long ok",
+				Subject: "this subject is exactly ninety-four characters long which is under the limit ok",
 			},
 			want: false,
 		},
@@ -324,7 +324,7 @@ func TestCommitMessage_SubjectExceedsLength(t *testing.T) {
 			name: "exceeds 72 chars",
 			cm: &CommitMessage{
 				Type:    "feat",
-				Subject: "this is a very long subject line that definitely exceeds the recommended limit",
+				Subject: "this is a very long subject line that definitely exceeds the recommended 100 character limit for commits",
 			},
 			want: true,
 		},
