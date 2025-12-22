@@ -148,7 +148,7 @@ Manage configuration settings.
 
 #### `gitsage config init`
 
-Create a new configuration file at `~/.gitsage.yaml` with default values.
+Create a new configuration file at `~/.gitsage/config.yaml` with default values.
 
 #### `gitsage config set <key> <value>`
 
@@ -194,7 +194,7 @@ These flags work with all commands:
 
 ## Configuration
 
-Configuration is stored in `~/.gitsage.yaml`. Create it with `gitsage config init`.
+Configuration is stored in `~/.gitsage/config.yaml`. Create it with `gitsage config init`.
 
 ### Configuration File Structure
 
@@ -243,7 +243,7 @@ Values are loaded in this order (highest priority first):
 
 1. Command-line flags (`--provider`, `--model`)
 2. Environment variables (`GITSAGE_API_KEY`, etc.)
-3. Configuration file (`~/.gitsage.yaml`)
+3. Configuration file (`~/.gitsage/config.yaml`)
 4. Default values
 
 ### Environment Variables
