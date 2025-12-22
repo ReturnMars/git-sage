@@ -252,7 +252,7 @@ type Manager interface {
 **Configuration Priority:**
 1. Command-line flags (highest)
 2. Environment variables (e.g., `GITSAGE_API_KEY`)
-3. Config file (`~/.gitsage.yaml`)
+3. Config file (`~/.gitsage/config.yaml`)
 4. Default values (lowest)
 
 **Default Configuration:**

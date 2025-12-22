@@ -58,7 +58,7 @@ Built:  ` + date + "\n")
 
 	// Global flags
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose logging")
-	rootCmd.PersistentFlags().String("config", "", "Config file path (default: ~/.gitsage.yaml)")
+	rootCmd.PersistentFlags().String("config", "", "Config file path (default: ~/.gitsage/config.yaml)")
 	rootCmd.PersistentFlags().String("provider", "", "AI provider to use (openai, deepseek, ollama)")
 	rootCmd.PersistentFlags().String("model", "", "AI model to use")
 	rootCmd.PersistentFlags().Bool("skip-path-check", false, "Skip PATH detection check")

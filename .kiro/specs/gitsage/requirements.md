@@ -12,7 +12,7 @@ GitSage is an AI-powered command-line tool that automatically generates semantic
 - **Conventional Commits**: Industry-standard commit message format: `<type>(<scope>): <subject>`
 - **Diff Chunk**: A segment of git diff output, typically representing changes to a single file or logical group
 - **Dry-run Mode**: Operation mode where commit messages are generated but not committed
-- **Config File**: YAML configuration file stored at `~/.gitsage.yaml`
+- **Config File**: YAML configuration file stored at `~/.gitsage/config.yaml`
 - **Interactive UI**: Terminal-based user interface for reviewing and editing generated messages
 
 ## Requirements
@@ -47,7 +47,7 @@ GitSage is an AI-powered command-line tool that automatically generates semantic
 
 #### Acceptance Criteria
 
-1. WHEN a user executes `gitsage config init`, THEN the System SHALL create a configuration file at `~/.gitsage.yaml` with default values
+1. WHEN a user executes `gitsage config init`, THEN the System SHALL create a configuration file at `~/.gitsage/config.yaml` with default values
 2. WHEN a user executes `gitsage config set <key> <value>`, THEN the System SHALL update the specified key in the configuration file
 3. WHEN a user executes `gitsage config list`, THEN the System SHALL display all current configuration values
 4. WHEN the System loads configuration, THEN the System SHALL prioritize values in this order: command-line flags, environment variables, config file, defaults

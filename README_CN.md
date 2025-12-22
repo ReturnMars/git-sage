@@ -148,7 +148,7 @@ gitsage history clear
 
 #### `gitsage config init`
 
-在 `~/.gitsage.yaml` 创建新的配置文件，使用默认值。
+在 `~/.gitsage/config.yaml` 创建新的配置文件，使用默认值。
 
 #### `gitsage config set <key> <value>`
 
@@ -194,7 +194,7 @@ gitsage config set git.diff_size_threshold 20480
 
 ## 配置
 
-配置存储在 `~/.gitsage.yaml`。使用 `gitsage config init` 创建。
+配置存储在 `~/.gitsage/config.yaml`。使用 `gitsage config init` 创建。
 
 ### 配置文件结构
 
@@ -243,7 +243,7 @@ security:
 
 1. 命令行参数（`--provider`、`--model`）
 2. 环境变量（`GITSAGE_API_KEY` 等）
-3. 配置文件（`~/.gitsage.yaml`）
+3. 配置文件（`~/.gitsage/config.yaml`）
 4. 默认值
 
 ### 环境变量

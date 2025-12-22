@@ -28,7 +28,7 @@
 - [x] 2.1 Implement config init command
 
 
-  - Create `config init` command that generates ~/.gitsage.yaml
+  - Create `config init` command that generates ~/.gitsage/config.yaml
   - Populate with default values from design document
   - Set file permissions to 0600 for security
   - _Requirements: 3.1_

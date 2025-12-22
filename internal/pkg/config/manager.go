@@ -31,7 +31,7 @@ type ViperManager struct {
 }
 
 // NewManager creates a new configuration manager.
-// If configPath is empty, it uses the default path (~/.gitsage.yaml).
+// If configPath is empty, it uses the default path (~/.gitsage/config.yaml).
 func NewManager(configPath string) (*ViperManager, error) {
 	v := viper.New()
 
