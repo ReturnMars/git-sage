@@ -14,6 +14,7 @@
 - **历史记录**: 保存生成的提交信息历史供参考
 - **预览模式**: 预览信息而不实际提交
 - **响应缓存**: 缓存 AI 响应，避免重复 API 调用
+- **自动 PATH 配置**: 首次运行时自动检测并配置 PATH 环境变量
 
 ## 安装
 
@@ -59,6 +60,18 @@ make build
    git add .
    gitsage
    ```
+
+### 首次运行 PATH 检测
+
+首次运行时，GitSage 会检查自身是否在系统 PATH 中。如果未找到，会提供自动添加选项：
+
+- **Windows**: 通过 `setx` 命令添加到用户 PATH
+- **macOS/Linux**: 在 shell 配置文件中添加 export 语句（`.bashrc`、`.zshrc`、`.config/fish/config.fish`）
+
+你可以使用 `--skip-path-check` 参数跳过此检查，或稍后重置：
+```bash
+gitsage config set security.path_check_done false
+```
 
 ## 使用方法
 
@@ -175,6 +188,7 @@ gitsage config set git.diff_size_threshold 20480
 | `--config` | | 自定义配置文件路径 |
 | `--provider` | | 临时覆盖 AI 供应商 |
 | `--model` | | 临时覆盖 AI 模型 |
+| `--skip-path-check` | | 跳过 PATH 检测 |
 | `--version` | | 显示版本信息 |
 | `--help` | `-h` | 显示帮助 |
 
@@ -217,6 +231,10 @@ cache:
   enabled: true         # 启用响应缓存
   max_entries: 100      # 最大缓存条目数
   ttl_minutes: 60       # 缓存 TTL（分钟）
+
+security:
+  warning_acknowledged: false  # 首次使用安全警告标志
+  path_check_done: false       # PATH 检测完成标志
 ```
 
 ### 配置优先级
@@ -235,6 +253,7 @@ cache:
 | `GITSAGE_API_KEY` | AI 供应商的 API 密钥 |
 | `GITSAGE_PROVIDER` | AI 供应商名称 |
 | `GITSAGE_MODEL` | AI 模型名称 |
+| `GITSAGE_SECURITY_PATH_CHECK_DONE` | 设置为 `true` 时跳过 PATH 检测 |
 
 ## AI 供应商
 
@@ -332,6 +351,37 @@ gitsage --no-cache
 ```bash
 gitsage config set cache.enabled false
 ```
+
+### 安装后找不到 PATH
+
+如果安装后在 PATH 中找不到 GitSage：
+
+1. **检查 PATH 检测是否运行**: 首次运行时，GitSage 应自动检测并提供添加到 PATH 的选项
+2. **手动触发 PATH 检查**: 重置标志并重新运行：
+   ```bash
+   gitsage config set security.path_check_done false
+   gitsage
+   ```
+3. **跳过自动检测**: 如果你更喜欢手动设置，使用 `--skip-path-check` 参数
+4. **手动配置说明**:
+   
+   **Windows**:
+   - 打开"系统属性" → "高级" → "环境变量"
+   - 在"用户变量"中找到 PATH
+   - 添加包含 `gitsage.exe` 的目录
+   - 重启终端
+   
+   **macOS/Linux (Bash/Zsh)**:
+   ```bash
+   echo 'export PATH="$PATH:/path/to/gitsage"' >> ~/.bashrc  # 或 ~/.zshrc
+   source ~/.bashrc
+   ```
+   
+   **Fish**:
+   ```bash
+   echo 'set -gx PATH $PATH /path/to/gitsage' >> ~/.config/fish/config.fish
+   source ~/.config/fish/config.fish
+   ```
 
 ## 贡献
 

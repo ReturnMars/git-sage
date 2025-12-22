@@ -22,6 +22,8 @@ type CacheConfig struct {
 type SecurityConfig struct {
 	// WarningAcknowledged indicates if the user has acknowledged the first-use security warning.
 	WarningAcknowledged bool `mapstructure:"warning_acknowledged"`
+	// PathCheckDone indicates if the PATH check has been performed.
+	PathCheckDone bool `mapstructure:"path_check_done"`
 }
 
 // ProviderConfig contains AI provider settings.

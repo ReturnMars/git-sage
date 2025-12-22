@@ -14,6 +14,7 @@ English | [简体中文](README_CN.md)
 - **History Tracking**: Keeps a history of generated messages for reference
 - **Dry-Run Mode**: Preview messages without committing
 - **Response Caching**: Caches AI responses to avoid redundant API calls
+- **Automatic PATH Setup**: First-run detection and automatic PATH configuration for global access
 
 ## Installation
 
@@ -59,6 +60,18 @@ Available platforms:
    git add .
    gitsage
    ```
+
+### First Run PATH Detection
+
+On first run, GitSage will check if it's accessible from your system PATH. If not found, it will offer to automatically add itself:
+
+- **Windows**: Adds to user PATH via `setx` command
+- **macOS/Linux**: Appends export statement to your shell profile (`.bashrc`, `.zshrc`, `.config/fish/config.fish`)
+
+You can skip this check with the `--skip-path-check` flag or reset it later with:
+```bash
+gitsage config set security.path_check_done false
+```
 
 ## Usage
 
@@ -175,6 +188,7 @@ These flags work with all commands:
 | `--config` | | Custom config file path |
 | `--provider` | | Override AI provider for this execution |
 | `--model` | | Override AI model for this execution |
+| `--skip-path-check` | | Skip PATH detection check |
 | `--version` | | Show version information |
 | `--help` | `-h` | Show help |
 
@@ -217,6 +231,10 @@ cache:
   enabled: true         # Enable response caching
   max_entries: 100      # Maximum cache entries
   ttl_minutes: 60       # Cache TTL in minutes
+
+security:
+  warning_acknowledged: false  # First-use security warning flag
+  path_check_done: false       # PATH detection completion flag
 ```
 
 ### Configuration Priority
@@ -235,6 +253,7 @@ Values are loaded in this order (highest priority first):
 | `GITSAGE_API_KEY` | API key for the AI provider |
 | `GITSAGE_PROVIDER` | AI provider name |
 | `GITSAGE_MODEL` | AI model name |
+| `GITSAGE_SECURITY_PATH_CHECK_DONE` | Skip PATH detection if set to `true` |
 
 ## AI Providers
 
@@ -332,6 +351,37 @@ Or disable caching entirely:
 ```bash
 gitsage config set cache.enabled false
 ```
+
+### PATH Not Found After Installation
+
+If GitSage is not found in your PATH after installation:
+
+1. **Check if PATH detection ran**: On first run, GitSage should automatically detect and offer to add itself to PATH
+2. **Manually trigger PATH check**: Reset the flag and run again:
+   ```bash
+   gitsage config set security.path_check_done false
+   gitsage
+   ```
+3. **Skip automatic detection**: Use the `--skip-path-check` flag if you prefer manual setup
+4. **Manual setup instructions**:
+   
+   **Windows**:
+   - Open System Properties → Advanced → Environment Variables
+   - Find PATH in User Variables
+   - Add the directory containing `gitsage.exe`
+   - Restart your terminal
+   
+   **macOS/Linux (Bash/Zsh)**:
+   ```bash
+   echo 'export PATH="$PATH:/path/to/gitsage"' >> ~/.bashrc  # or ~/.zshrc
+   source ~/.bashrc
+   ```
+   
+   **Fish**:
+   ```bash
+   echo 'set -gx PATH $PATH /path/to/gitsage' >> ~/.config/fish/config.fish
+   source ~/.config/fish/config.fish
+   ```
 
 ## Contributing
 

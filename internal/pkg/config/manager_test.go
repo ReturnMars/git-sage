@@ -396,3 +396,150 @@ func TestCustomConfigPath(t *testing.T) {
 		t.Errorf("Expected custom config value 'ollama', got %q", cfg.Provider.Name)
 	}
 }
+
+// Feature: path-detection, Property 2: Config flag persistence round-trip
+// Validates: Requirements 1.4, 1.5, 2.6, 3.2
+//
+// Property: For any PATH check completion (whether user accepts, declines, or is already in PATH),
+// setting path_check_done to true and then reading it should return true,
+// and subsequent runs should skip the PATH check.
+func TestPathCheckDonePersistence_Property(t *testing.T) {
+	parameters := gopter.DefaultTestParameters()
+	parameters.MinSuccessfulTests = 100
+	parameters.Rng.Seed(42)
+
+	properties := gopter.NewProperties(parameters)
+
+	// Property: SetPathCheckDone then IsPathCheckDone returns true (round-trip)
+	properties.Property("SetPathCheckDone then IsPathCheckDone returns true", prop.ForAll(
+		func(_ int) bool {
+			// Create a temporary config directory
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, ".gitsage", "config.yaml")
+
+			// Create manager (config file doesn't exist yet)
+			mgr, err := NewManager(configPath)
+			if err != nil {
+				t.Logf("Failed to create manager: %v", err)
+				return false
+			}
+
+			// Initially should be false (default)
+			if mgr.IsPathCheckDone() {
+				t.Logf("Expected IsPathCheckDone to be false initially")
+				return false
+			}
+
+			// Set path check done
+			if err := mgr.SetPathCheckDone(); err != nil {
+				t.Logf("Failed to set path check done: %v", err)
+				return false
+			}
+
+			// Should now return true
+			if !mgr.IsPathCheckDone() {
+				t.Logf("Expected IsPathCheckDone to be true after SetPathCheckDone")
+				return false
+			}
+
+			return true
+		},
+		gen.Int(), // Dummy generator to run the test multiple times
+	))
+
+	// Property: path_check_done persists across manager instances
+	properties.Property("path_check_done persists across manager instances", prop.ForAll(
+		func(_ int) bool {
+			// Create a temporary config directory
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, ".gitsage", "config.yaml")
+
+			// Create first manager and set path check done
+			mgr1, err := NewManager(configPath)
+			if err != nil {
+				t.Logf("Failed to create first manager: %v", err)
+				return false
+			}
+
+			if err := mgr1.SetPathCheckDone(); err != nil {
+				t.Logf("Failed to set path check done: %v", err)
+				return false
+			}
+
+			// Create a NEW manager (simulating a new execution)
+			mgr2, err := NewManager(configPath)
+			if err != nil {
+				t.Logf("Failed to create second manager: %v", err)
+				return false
+			}
+
+			// Should still return true (persisted to file)
+			if !mgr2.IsPathCheckDone() {
+				t.Logf("Expected IsPathCheckDone to persist across manager instances")
+				return false
+			}
+
+			return true
+		},
+		gen.Int(), // Dummy generator to run the test multiple times
+	))
+
+	// Property: config file is created if it doesn't exist when SetPathCheckDone is called
+	properties.Property("SetPathCheckDone creates config file if not exists", prop.ForAll(
+		func(_ int) bool {
+			// Create a temporary config directory
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, ".gitsage", "config.yaml")
+
+			// Verify config file doesn't exist
+			if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+				t.Logf("Config file should not exist initially")
+				return false
+			}
+
+			// Create manager
+			mgr, err := NewManager(configPath)
+			if err != nil {
+				t.Logf("Failed to create manager: %v", err)
+				return false
+			}
+
+			// Set path check done (should create file)
+			if err := mgr.SetPathCheckDone(); err != nil {
+				t.Logf("Failed to set path check done: %v", err)
+				return false
+			}
+
+			// Verify config file now exists
+			if _, err := os.Stat(configPath); os.IsNotExist(err) {
+				t.Logf("Config file should exist after SetPathCheckDone")
+				return false
+			}
+
+			return true
+		},
+		gen.Int(), // Dummy generator to run the test multiple times
+	))
+
+	// Property: IsPathCheckDone returns false by default when config doesn't exist
+	properties.Property("IsPathCheckDone returns false by default", prop.ForAll(
+		func(_ int) bool {
+			// Create a temporary config directory
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, ".gitsage", "config.yaml")
+
+			// Create manager (no config file)
+			mgr, err := NewManager(configPath)
+			if err != nil {
+				t.Logf("Failed to create manager: %v", err)
+				return false
+			}
+
+			// Should return false (default)
+			return !mgr.IsPathCheckDone()
+		},
+		gen.Int(), // Dummy generator to run the test multiple times
+	))
+
+	properties.TestingRun(t)
+}

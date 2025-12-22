@@ -93,6 +93,7 @@ func bindEnvVars(v *viper.Viper) {
 
 	// Security settings
 	_ = v.BindEnv("security.warning_acknowledged", "GITSAGE_SECURITY_WARNING_ACKNOWLEDGED")
+	_ = v.BindEnv("security.path_check_done", "GITSAGE_SECURITY_PATH_CHECK_DONE")
 
 	// Cache settings
 	_ = v.BindEnv("cache.enabled", "GITSAGE_CACHE_ENABLED")
@@ -134,6 +135,7 @@ func setDefaults(v *viper.Viper) {
 
 	// Security defaults
 	v.SetDefault("security.warning_acknowledged", false)
+	v.SetDefault("security.path_check_done", false)
 
 	// Cache defaults
 	v.SetDefault("cache.enabled", true)
@@ -341,4 +343,35 @@ func (m *ViperManager) IsSecurityWarningAcknowledged() bool {
 	// Load config first (ignore errors, use defaults)
 	_ = m.v.ReadInConfig()
 	return m.v.GetBool("security.warning_acknowledged")
+}
+
+// SetPathCheckDone marks the PATH check as completed.
+// This ensures the PATH detection only runs once on first execution.
+// If the config file doesn't exist, it will be created.
+func (m *ViperManager) SetPathCheckDone() error {
+	// Ensure config directory exists
+	dir := filepath.Dir(m.configPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Check if config file exists, if not create it first
+	if _, err := os.Stat(m.configPath); os.IsNotExist(err) {
+		// Create empty config file with proper permissions
+		f, err := os.OpenFile(m.configPath, os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			return fmt.Errorf("failed to create config file: %w", err)
+		}
+		f.Close()
+	}
+
+	return m.Set("security.path_check_done", "true")
+}
+
+// IsPathCheckDone checks if the PATH check has been performed.
+// Returns false by default if not set.
+func (m *ViperManager) IsPathCheckDone() bool {
+	// Load config first (ignore errors, use defaults)
+	_ = m.v.ReadInConfig()
+	return m.v.GetBool("security.path_check_done")
 }
