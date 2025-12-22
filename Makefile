@@ -25,8 +25,8 @@ CMD_DIR=cmd/gitsage
 # Default target
 all: build
 
-## build: Build the binary
-build:
+## build: Build the binary (cleans first to ensure fresh build)
+build: clean
 	CGO_ENABLED=0 $(GOBUILD) $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME) ./$(CMD_DIR)
 
 ## build-all: Build for all platforms
