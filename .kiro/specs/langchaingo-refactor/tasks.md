@@ -44,47 +44,47 @@
     - 验证 LangChain 模板渲染与原实现等价
     - **Validates: Requirements 3.4, 3.5**
 
-- [ ] 3. 重构 OpenAI Provider
-  - [ ] 3.1 使用 LangChain 重写 OpenAI Provider
+- [x] 3. 重构 OpenAI Provider
+  - [x] 3.1 使用 LangChain 重写 OpenAI Provider
     - 修改 `internal/pkg/ai/openai.go`
     - 使用 `langchaingo/llms/openai` 创建 LLM
     - 使用 `LangChainWrapper` 封装调用
     - 保持 `SetPromptTemplate` 方法兼容
     - _Requirements: 2.2, 1.1, 1.4_
 
-  - [ ] 3.2 更新 OpenAI Provider 测试
+  - [x] 3.2 更新 OpenAI Provider 测试
     - 更新 `internal/pkg/ai/openai_test.go`
     - 验证接口兼容性
     - _Requirements: 1.1, 1.4_
 
-- [ ] 4. 重构 Ollama Provider
-  - [ ] 4.1 使用 LangChain 重写 Ollama Provider
+- [x] 4. 重构 Ollama Provider
+  - [x] 4.1 使用 LangChain 重写 Ollama Provider
     - 修改 `internal/pkg/ai/ollama.go`
     - 使用 `langchaingo/llms/ollama` 创建 LLM
     - 使用 `LangChainWrapper` 封装调用
     - 保持默认 endpoint 为 `http://localhost:11434`
     - _Requirements: 2.3, 1.1, 1.4_
 
-  - [ ] 4.2 更新 Ollama Provider 测试
+  - [x] 4.2 更新 Ollama Provider 测试
     - 更新 `internal/pkg/ai/ollama_test.go`
     - 验证接口兼容性
     - _Requirements: 1.1, 1.4_
 
-- [ ] 5. 重构 DeepSeek Provider
-  - [ ] 5.1 使用 LangChain 重写 DeepSeek Provider
+- [x] 5. 重构 DeepSeek Provider
+  - [x] 5.1 使用 LangChain 重写 DeepSeek Provider
     - 修改 `internal/pkg/ai/deepseek.go`
     - 使用 `langchaingo/llms/openai` 配置 DeepSeek endpoint
     - 使用 `LangChainWrapper` 封装调用
     - 保持默认 endpoint 为 `https://api.deepseek.com/v1`
     - _Requirements: 2.4, 1.1, 1.4_
 
-  - [ ] 5.2 更新 DeepSeek Provider 测试
+  - [x] 5.2 更新 DeepSeek Provider 测试
     - 更新 `internal/pkg/ai/deepseek_test.go`
     - 验证接口兼容性
     - _Requirements: 1.1, 1.4_
 
-- [ ] 6. 实现统一错误处理
-  - [ ] 6.1 实现 LangChain 错误包装
+- [x] 6. 实现统一错误处理
+  - [x] 6.1 实现 LangChain 错误包装
     - 在 `langchain_wrapper.go` 中实现 `wrapError` 方法
     - 映射认证错误 (401)
     - 映射速率限制错误 (429)
@@ -92,41 +92,41 @@
     - 映射连接错误 (Ollama 特有)
     - _Requirements: 4.3, 4.4, 4.5_
 
-  - [ ]* 6.2 编写错误处理属性测试
+  - [x]* 6.2 编写错误处理属性测试
     - **Property 4: Error Wrapping Consistency**
     - 验证错误包装产生用户友好消息
     - **Validates: Requirements 4.3**
 
-- [ ] 7. Checkpoint - 验证核心功能
+- [x] 7. Checkpoint - 验证核心功能
   - 运行所有现有测试确保通过
   - 验证 `go build` 成功
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 8. 更新工厂函数和清理代码
-  - [ ] 8.1 更新 Factory 函数
+- [x] 8. 更新工厂函数和清理代码
+  - [x] 8.1 更新 Factory 函数
     - 修改 `internal/pkg/ai/factory.go`
     - 确保 `NewProvider` 使用新的 provider 实现
     - 确保 `NewProviderWithCustomPrompt` 正常工作
     - _Requirements: 5.1, 5.2, 5.3_
 
-  - [ ]* 8.2 编写工厂函数属性测试
+  - [x]* 8.2 编写工厂函数属性测试
     - **Property 3: Provider Factory Correctness**
     - 验证工厂为各 provider 创建正确实例
     - **Validates: Requirements 5.2, 5.4, 5.5**
 
-  - [ ] 8.3 清理废弃代码
+  - [x] 8.3 清理废弃代码
     - 移除 `sashabaranov/go-openai` 依赖
     - 移除 Ollama 的自定义 HTTP 客户端代码
     - 移除重复的重试逻辑代码
     - _Requirements: 2.5, 7.1, 7.3_
 
-- [ ] 9. 编写输出格式属性测试
-  - [ ]* 9.1 编写输出格式一致性属性测试
+- [x] 9. 编写输出格式属性测试
+  - [x]* 9.1 编写输出格式一致性属性测试
     - **Property 1: Output Format Consistency**
     - 验证 GenerateResponse 结构一致
     - **Validates: Requirements 1.4, 6.3, 6.4**
 
-- [ ] 10. Final Checkpoint - 完整验证
+- [x] 10. Final Checkpoint - 完整验证
   - 运行 `go test ./...` 确保所有测试通过
   - 运行 `go build ./...` 确保编译成功
   - 验证 `go mod tidy` 无多余依赖

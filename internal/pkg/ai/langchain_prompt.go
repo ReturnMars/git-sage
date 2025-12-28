@@ -2,6 +2,7 @@
 package ai
 
 import (
+	apperrors "github.com/gitsage/gitsage/internal/pkg/errors"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/prompts"
 )
@@ -75,11 +76,14 @@ func NewLangChainPromptTemplateWithCustom(systemPrompt, userPrompt string) *Lang
 // If CustomPrompt is set in the PromptData, it is used directly as the user message
 // instead of rendering the user prompt template.
 func (pt *LangChainPromptTemplate) RenderMessages(data *PromptData) ([]llms.MessageContent, error) {
+	apperrors.Debug("[LangChain] RenderMessages: using langchaingo/prompts package")
+
 	// Render system prompt (no variables needed)
 	systemContent, err := pt.systemPrompt.Format(nil)
 	if err != nil {
 		return nil, err
 	}
+	apperrors.Debug("[LangChain] System prompt rendered via langchaingo (len=%d)", len(systemContent))
 
 	// If custom prompt is provided, use it directly
 	var userContent string
@@ -97,6 +101,7 @@ func (pt *LangChainPromptTemplate) RenderMessages(data *PromptData) ([]llms.Mess
 		if err != nil {
 			return nil, err
 		}
+		apperrors.Debug("[LangChain] User prompt rendered via langchaingo template (len=%d, chunks=%d)", len(userContent), len(data.Chunks))
 	}
 
 	// Build LangChain message content

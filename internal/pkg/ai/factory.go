@@ -54,7 +54,7 @@ func NewProviderWithCustomPrompt(cfg *config.ProviderConfig, systemPrompt, userP
 	}
 
 	// Set custom prompt template if provider supports it
-	pt := NewPromptTemplateWithCustom(systemPrompt, userPrompt)
+	pt := NewLangChainPromptTemplateWithCustom(systemPrompt, userPrompt)
 
 	switch p := provider.(type) {
 	case *OpenAIProvider:

@@ -4,12 +4,10 @@ package ai
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/http"
 	"time"
 
 	apperrors "github.com/gitsage/gitsage/internal/pkg/errors"
-	"github.com/sashabaranov/go-openai"
+	"github.com/tmc/langchaingo/llms/openai"
 )
 
 const (
@@ -35,14 +33,13 @@ const (
 	MaxRetryDelay = 10 * time.Second
 )
 
-// OpenAIProvider implements the Provider interface for OpenAI.
+// OpenAIProvider implements the Provider interface for OpenAI using LangChain.
 type OpenAIProvider struct {
-	client         *openai.Client
-	config         ProviderConfig
-	promptTemplate *PromptTemplate
+	wrapper *LangChainWrapper
+	config  ProviderConfig
 }
 
-// NewOpenAIProvider creates a new OpenAI provider.
+// NewOpenAIProvider creates a new OpenAI provider using LangChain.
 func NewOpenAIProvider(config ProviderConfig) (*OpenAIProvider, error) {
 	if err := validateOpenAIConfig(config); err != nil {
 		return nil, err
@@ -59,31 +56,32 @@ func NewOpenAIProvider(config ProviderConfig) (*OpenAIProvider, error) {
 		config.MaxTokens = DefaultMaxTokens
 	}
 
-	// Create OpenAI client configuration
-	clientConfig := openai.DefaultConfig(config.APIKey)
+	// Build LangChain OpenAI options
+	opts := []openai.Option{
+		openai.WithToken(config.APIKey),
+		openai.WithModel(config.Model),
+	}
 
 	// Support custom endpoints (for OpenAI-compatible APIs)
 	if config.Endpoint != "" {
-		clientConfig.BaseURL = config.Endpoint
+		opts = append(opts, openai.WithBaseURL(config.Endpoint))
 	}
 
-	// Create HTTP client with timeout and connection pooling
-	transport := &http.Transport{
-		MaxIdleConns:        10,
-		MaxIdleConnsPerHost: 5,
-		IdleConnTimeout:     90 * time.Second,
-	}
-	clientConfig.HTTPClient = &http.Client{
-		Timeout:   DefaultTimeout,
-		Transport: transport,
+	// Create LangChain OpenAI LLM
+	llm, err := openai.New(opts...)
+	if err != nil {
+		return nil, err
 	}
 
-	client := openai.NewClientWithConfig(clientConfig)
+	// Log provider creation
+	apperrors.Debug("AI provider created: openai")
+
+	// Create wrapper with the LLM
+	wrapper := NewLangChainWrapper(llm, config, "openai")
 
 	return &OpenAIProvider{
-		client:         client,
-		config:         config,
-		promptTemplate: NewPromptTemplate(),
+		wrapper: wrapper,
+		config:  config,
 	}, nil
 }
 
@@ -112,178 +110,27 @@ func (p *OpenAIProvider) ValidateConfig(config ProviderConfig) error {
 	return validateOpenAIConfig(config)
 }
 
-// GenerateCommitMessage generates a commit message using OpenAI.
+// GenerateCommitMessage generates a commit message using OpenAI via LangChain.
 func (p *OpenAIProvider) GenerateCommitMessage(ctx context.Context, req *GenerateRequest) (*GenerateResponse, error) {
-	if req == nil {
-		return nil, errors.New("request cannot be nil")
-	}
-
-	// Allow empty DiffChunks if CustomPrompt is provided (for summary-based generation)
-	if len(req.DiffChunks) == 0 && req.CustomPrompt == "" {
-		return nil, errors.New("no diff chunks provided")
-	}
-
-	// Determine if chunking is required based on total diff size
-	totalSize := 0
-	for _, chunk := range req.DiffChunks {
-		totalSize += len(chunk.Content)
-	}
-	requiresChunking := totalSize > 10*1024 // 10KB threshold
-
-	// Build prompt data
-	promptData := BuildPromptData(req, requiresChunking)
-
-	// Render user prompt
-	userPrompt, err := p.promptTemplate.RenderUserPrompt(promptData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to render prompt: %w", err)
-	}
-
-	// Create chat completion request
-	chatReq := openai.ChatCompletionRequest{
-		Model: p.config.Model,
-		Messages: []openai.ChatCompletionMessage{
-			{
-				Role:    openai.ChatMessageRoleSystem,
-				Content: p.promptTemplate.GetSystemPrompt(),
-			},
-			{
-				Role:    openai.ChatMessageRoleUser,
-				Content: userPrompt,
-			},
-		},
-		Temperature: p.config.Temperature,
-		MaxTokens:   p.config.MaxTokens,
-	}
-
-	// Log API request in verbose mode
-	apperrors.LogAPIRequest("openai", p.config.Endpoint, p.config.Model, len(userPrompt))
-	startTime := time.Now()
-
-	// Call OpenAI API with retry logic
-	var resp openai.ChatCompletionResponse
-	var lastErr error
-
-	for attempt := 0; attempt < MaxRetries; attempt++ {
-		resp, lastErr = p.client.CreateChatCompletion(ctx, chatReq)
-		if lastErr == nil {
-			break
-		}
-
-		// Check if error is retryable
-		if !isRetryableError(lastErr) {
-			return nil, wrapAPIError(lastErr)
-		}
-
-		// Calculate backoff delay
-		delay := calculateBackoff(attempt)
-
-		// Log retry attempt
-		apperrors.LogRetry(attempt+1, MaxRetries, lastErr, delay)
-
-		// Wait before retry (respect context cancellation)
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(delay):
-			// Continue to next retry
-		}
-	}
-
-	if lastErr != nil {
-		return nil, wrapAPIError(lastErr)
-	}
-
-	// Log API response
-	duration := time.Since(startTime)
-	responseLen := 0
-	if len(resp.Choices) > 0 {
-		responseLen = len(resp.Choices[0].Message.Content)
-	}
-	apperrors.LogAPIResponse("openai", 200, responseLen, duration)
-
-	// Extract response content
-	if len(resp.Choices) == 0 {
-		return nil, errors.New("no response from AI provider")
-	}
-
-	rawText := resp.Choices[0].Message.Content
-
-	// Parse the response into structured format
-	parsed := ParseCommitMessage(rawText)
-
-	return parsed.ToGenerateResponse(rawText), nil
+	return p.wrapper.GenerateWithRetry(ctx, req)
 }
 
-// isRetryableError checks if an error is retryable.
-func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
+// SetPromptTemplate sets a custom prompt template.
+func (p *OpenAIProvider) SetPromptTemplate(pt *LangChainPromptTemplate) {
+	p.wrapper.SetPromptTemplate(pt)
+}
 
-	// Check for OpenAI API errors
-	var apiErr *openai.APIError
-	if errors.As(err, &apiErr) {
-		// Retry on rate limit (429) and server errors (5xx)
-		switch apiErr.HTTPStatusCode {
-		case http.StatusTooManyRequests, // 429
-			http.StatusInternalServerError, // 500
-			http.StatusBadGateway,          // 502
-			http.StatusServiceUnavailable,  // 503
-			http.StatusGatewayTimeout:      // 504
-			return true
-		}
-	}
-
-	// Check for context deadline exceeded (timeout)
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-
-	return false
+// GetConfig returns the provider configuration (useful for testing).
+func (p *OpenAIProvider) GetConfig() ProviderConfig {
+	return p.config
 }
 
 // calculateBackoff calculates the backoff delay for a retry attempt.
+// This is a shared utility function used by all providers.
 func calculateBackoff(attempt int) time.Duration {
 	delay := InitialRetryDelay * time.Duration(1<<uint(attempt))
 	if delay > MaxRetryDelay {
 		delay = MaxRetryDelay
 	}
 	return delay
-}
-
-// wrapAPIError wraps an API error with a user-friendly message.
-func wrapAPIError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	var apiErr *openai.APIError
-	if errors.As(err, &apiErr) {
-		switch apiErr.HTTPStatusCode {
-		case http.StatusUnauthorized:
-			return apperrors.NewAuthenticationError("OpenAI")
-		case http.StatusTooManyRequests:
-			// Try to parse Retry-After from the error message or use default
-			retryAfter := 60 * time.Second // Default to 60 seconds
-			return apperrors.NewRateLimitError(retryAfter)
-		case http.StatusBadRequest:
-			return apperrors.Wrap(err, apperrors.ErrAIProviderFailed, fmt.Sprintf("invalid request: %s", apiErr.Message))
-		default:
-			return apperrors.Wrap(err, apperrors.ErrAIProviderFailed, fmt.Sprintf("API error (status %d): %s", apiErr.HTTPStatusCode, apiErr.Message))
-		}
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return apperrors.NewTimeoutError(err)
-	}
-
-	return apperrors.NewAIProviderError("OpenAI", err)
-}
-
-// SetPromptTemplate sets a custom prompt template.
-func (p *OpenAIProvider) SetPromptTemplate(pt *PromptTemplate) {
-	if pt != nil {
-		p.promptTemplate = pt
-	}
 }

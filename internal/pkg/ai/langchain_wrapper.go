@@ -145,14 +145,50 @@ func (w *LangChainWrapper) GenerateWithRetry(ctx context.Context, req *GenerateR
 }
 
 // isRetryableError checks if an error is retryable.
+// 优先使用 LangChain 提供的类型化错误检查，同时保留字符串检查作为后备方案。
 func (w *LangChainWrapper) isRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	errStr := err.Error()
+	// 使用 LangChain 类型化错误检查（优先）
+	// 速率限制错误 - 可重试
+	if llms.IsRateLimitError(err) {
+		return true
+	}
 
-	// Retry on rate limit (429) and server errors (5xx)
+	// 配额超限错误 - 可重试（可能是临时的）
+	if llms.IsQuotaExceededError(err) {
+		return true
+	}
+
+	// 服务不可用错误 - 可重试
+	if llms.IsProviderUnavailableError(err) {
+		return true
+	}
+
+	// 超时错误 - 可重试
+	if llms.IsTimeoutError(err) {
+		return true
+	}
+
+	// 请求被取消 - 不重试（用户主动取消）
+	if llms.IsCanceledError(err) {
+		return false
+	}
+
+	// 认证错误 - 不重试（需要用户干预）
+	if llms.IsAuthenticationError(err) {
+		return false
+	}
+
+	// 无效请求错误 - 不重试（请求本身有问题）
+	if llms.IsInvalidRequestError(err) {
+		return false
+	}
+
+	// 后备方案：字符串检查（用于 LangChain 未捕获的错误）
+	errStr := err.Error()
 	if strings.Contains(errStr, "429") ||
 		strings.Contains(errStr, "500") ||
 		strings.Contains(errStr, "502") ||
@@ -163,7 +199,7 @@ func (w *LangChainWrapper) isRetryableError(err error) bool {
 		return true
 	}
 
-	// Check for context deadline exceeded (timeout)
+	// Context deadline exceeded (timeout)
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
@@ -172,29 +208,80 @@ func (w *LangChainWrapper) isRetryableError(err error) bool {
 }
 
 // wrapError wraps an error with a user-friendly message.
+// 优先使用 LangChain 类型化错误检查，提供更准确的错误分类。
 func (w *LangChainWrapper) wrapError(err error) error {
 	if err == nil {
 		return nil
 	}
 
+	// 使用 LangChain 类型化错误检查（优先）
+	// 认证错误
+	if llms.IsAuthenticationError(err) {
+		return apperrors.NewAuthenticationError(w.providerName)
+	}
+
+	// 速率限制错误
+	if llms.IsRateLimitError(err) {
+		return apperrors.NewRateLimitError(60 * time.Second)
+	}
+
+	// 配额超限错误
+	if llms.IsQuotaExceededError(err) {
+		appErr := apperrors.Wrap(err, apperrors.ErrAIProviderFailed, fmt.Sprintf("%s quota exceeded", w.providerName))
+		appErr.WithSuggestion("Please check your API quota or billing status")
+		return appErr
+	}
+
+	// 超时错误
+	if llms.IsTimeoutError(err) {
+		return apperrors.NewTimeoutError(err)
+	}
+
+	// 内容过滤错误
+	if llms.IsContentFilterError(err) {
+		appErr := apperrors.Wrap(err, apperrors.ErrAIProviderFailed, "content was filtered by safety policy")
+		appErr.WithSuggestion("Please modify your input to comply with content policies")
+		return appErr
+	}
+
+	// 无效请求错误
+	if llms.IsInvalidRequestError(err) {
+		return apperrors.Wrap(err, apperrors.ErrAIProviderFailed, fmt.Sprintf("%s invalid request", w.providerName))
+	}
+
+	// Token 限制错误
+	if llms.IsTokenLimitError(err) {
+		appErr := apperrors.Wrap(err, apperrors.ErrAIProviderFailed, "input or output exceeded token limit")
+		appErr.WithSuggestion("Please reduce the size of your diff or use a model with larger context window")
+		return appErr
+	}
+
+	// 服务不可用错误
+	if llms.IsProviderUnavailableError(err) {
+		appErr := apperrors.Wrap(err, apperrors.ErrAIProviderFailed, fmt.Sprintf("%s service is temporarily unavailable", w.providerName))
+		appErr.WithSuggestion("Please try again later")
+		return appErr
+	}
+
+	// 后备方案：字符串检查（用于 LangChain 未捕获的错误）
 	errStr := err.Error()
 
-	// Authentication error
+	// 认证错误 - 后备检查
 	if strings.Contains(errStr, "401") || strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "Unauthorized") {
 		return apperrors.NewAuthenticationError(w.providerName)
 	}
 
-	// Rate limit error
+	// 速率限制错误 - 后备检查
 	if strings.Contains(errStr, "429") || strings.Contains(errStr, "rate limit") || strings.Contains(errStr, "too many requests") {
 		return apperrors.NewRateLimitError(60 * time.Second)
 	}
 
-	// Timeout error
+	// 超时错误 - 后备检查
 	if errors.Is(err, context.DeadlineExceeded) {
 		return apperrors.NewTimeoutError(err)
 	}
 
-	// Connection error (Ollama specific)
+	// 连接错误 (Ollama 特有)
 	if strings.Contains(errStr, "connection refused") {
 		appErr := apperrors.NewNetworkError(err)
 		appErr.Message = fmt.Sprintf("cannot connect to %s", w.providerName)
