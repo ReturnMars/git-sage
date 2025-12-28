@@ -25,21 +25,21 @@
     - 保持 MaxRetries = 3
     - _Requirements: 4.1, 4.2_
 
-- [ ] 2. 实现 LangChain Prompt 模板
-  - [ ] 2.1 创建 LangChain Prompt 模板结构
+- [x] 2. 实现 LangChain Prompt 模板
+  - [x] 2.1 创建 LangChain Prompt 模板结构
     - 创建 `internal/pkg/ai/langchain_prompt.go`
     - 实现 `LangChainPromptTemplate` 结构体
     - 实现 `NewLangChainPromptTemplate` 使用默认 prompt
     - 实现 `NewLangChainPromptTemplateWithCustom` 支持自定义 prompt
     - _Requirements: 3.1, 3.2, 3.3_
 
-  - [ ] 2.2 实现消息渲染方法
+  - [x] 2.2 实现消息渲染方法
     - 实现 `RenderMessages` 方法
     - 将 PromptData 转换为 `[]llms.MessageContent`
     - 支持 system 和 user 消息
     - _Requirements: 3.4, 3.5_
 
-  - [ ]* 2.3 编写 Prompt 模板属性测试
+  - [x]* 2.3 编写 Prompt 模板属性测试
     - **Property 2: Prompt Rendering Equivalence**
     - 验证 LangChain 模板渲染与原实现等价
     - **Validates: Requirements 3.4, 3.5**

@@ -15,7 +15,7 @@ import (
 // LangChainWrapper wraps LangChain LLM calls with retry logic and error handling.
 type LangChainWrapper struct {
 	llm            llms.Model
-	promptTemplate *PromptTemplate
+	promptTemplate *LangChainPromptTemplate
 	config         ProviderConfig
 	providerName   string
 }
@@ -24,14 +24,14 @@ type LangChainWrapper struct {
 func NewLangChainWrapper(llm llms.Model, config ProviderConfig, providerName string) *LangChainWrapper {
 	return &LangChainWrapper{
 		llm:            llm,
-		promptTemplate: NewPromptTemplate(),
+		promptTemplate: NewLangChainPromptTemplate(),
 		config:         config,
 		providerName:   providerName,
 	}
 }
 
 // SetPromptTemplate sets a custom prompt template.
-func (w *LangChainWrapper) SetPromptTemplate(pt *PromptTemplate) {
+func (w *LangChainWrapper) SetPromptTemplate(pt *LangChainPromptTemplate) {
 	if pt != nil {
 		w.promptTemplate = pt
 	}
@@ -58,20 +58,25 @@ func (w *LangChainWrapper) generate(ctx context.Context, req *GenerateRequest) (
 	// Build prompt data
 	promptData := BuildPromptData(req, requiresChunking)
 
-	// Render user prompt
-	userPrompt, err := w.promptTemplate.RenderUserPrompt(promptData)
+	// Render messages using LangChain prompt template
+	messages, err := w.promptTemplate.RenderMessages(promptData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render prompt: %w", err)
 	}
 
-	// Build LangChain message content
-	messages := []llms.MessageContent{
-		llms.TextParts(llms.ChatMessageTypeSystem, w.promptTemplate.GetSystemPrompt()),
-		llms.TextParts(llms.ChatMessageTypeHuman, userPrompt),
+	// Get user prompt length for logging
+	userPromptLen := 0
+	if len(messages) > 1 {
+		for _, part := range messages[1].Parts {
+			if textPart, ok := part.(llms.TextContent); ok {
+				userPromptLen = len(textPart.Text)
+				break
+			}
+		}
 	}
 
 	// Log API request
-	apperrors.LogAPIRequest(w.providerName, w.config.Endpoint, w.config.Model, len(userPrompt))
+	apperrors.LogAPIRequest(w.providerName, w.config.Endpoint, w.config.Model, userPromptLen)
 	startTime := time.Now()
 
 	// Call LangChain LLM
@@ -103,7 +108,6 @@ func (w *LangChainWrapper) generate(ctx context.Context, req *GenerateRequest) (
 
 	return parsed.ToGenerateResponse(rawText), nil
 }
-
 
 // GenerateWithRetry performs LLM call with retry logic and error handling.
 func (w *LangChainWrapper) GenerateWithRetry(ctx context.Context, req *GenerateRequest) (*GenerateResponse, error) {
