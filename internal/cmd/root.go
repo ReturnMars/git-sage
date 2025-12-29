@@ -4,11 +4,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gitsage/gitsage/internal/pkg/config"
 	"github.com/gitsage/gitsage/internal/pkg/pathcheck"
-	"github.com/gitsage/gitsage/internal/pkg/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -107,15 +107,12 @@ func runPathCheckIfNeeded(cmd *cobra.Command) error {
 		return nil
 	}
 
-	cfg, err := cfgManager.Load()
-	if err != nil {
-		// If we can't load config, skip PATH check but don't fail
-		return nil
-	}
-
-	// Skip if PATH check was already done
-	if cfg.Security.PathCheckDone {
-		return nil
+	// We only need basic loading here, full load happens in commands
+	if cfgManager.ConfigExists() {
+		cfg, err := cfgManager.Load()
+		if err == nil && cfg.Security.PathCheckDone {
+			return nil
+		}
 	}
 
 	// Perform PATH check
@@ -130,14 +127,12 @@ func performPathCheck(cfgManager *config.ViperManager) error {
 	// Create PATH checker
 	checker, err := pathcheck.NewChecker()
 	if err != nil {
-		// If we can't create checker, skip but don't fail
 		return nil
 	}
 
 	// Check if already in PATH
 	inPath, err := checker.IsInPath(ctx)
 	if err != nil {
-		// If check fails, skip but don't fail
 		return nil
 	}
 
@@ -147,34 +142,33 @@ func performPathCheck(cfgManager *config.ViperManager) error {
 		return nil
 	}
 
-	// Create UI manager for user interaction
-	uiManager := ui.NewDefaultManager(true, "", false)
-
 	// Get executable directory for display
 	execDir, err := checker.GetExecutableDir()
 	if err != nil {
 		execDir = "<unknown>"
 	}
 
-	// Prompt user
+	// Prompt user - using simple fmt/scan here to avoid full UI dependency cycle or overhead in root
+	// Or we can use infra_ui if imported, but let's keep root simple and dependency-light if possible.
+	// Users requested ensuring NO old pkg usage.
+	// Let's use simple console I/O for this specific setup task.
+
 	fmt.Println()
 	fmt.Printf("GitSage 检测到可执行文件目录 (%s) 不在系统 PATH 中。\n", execDir)
 	fmt.Println("添加到 PATH 后，您可以在任何目录直接运行 'gitsage' 命令。")
 	fmt.Println()
+	fmt.Print("是否自动添加到 PATH? [y/N]: ")
 
-	confirmed, err := uiManager.PromptConfirm("是否自动添加到 PATH?")
-	if err != nil {
-		// If prompt fails, mark as done and continue
-		_ = cfgManager.Set("security.path_check_done", "true")
-		return nil
-	}
+	var response string
+	fmt.Scanln(&response)
+	response = strings.ToLower(strings.TrimSpace(response))
+	confirmed := response == "y" || response == "yes"
 
 	if confirmed {
 		// Try to add to PATH
 		result, err := checker.AddToPath(ctx)
 		if err != nil || !result.Success {
-			// Show error and manual instructions
-			uiManager.ShowError(fmt.Errorf("自动添加失败"))
+			fmt.Printf("Error: 自动添加失败: %v\n", err)
 
 			// Get shell type for instructions (Unix only)
 			shellType := pathcheck.ShellUnknown
@@ -185,8 +179,7 @@ func performPathCheck(cfgManager *config.ViperManager) error {
 			instructions := pathcheck.GetManualInstructions(execDir, shellType)
 			fmt.Println(pathcheck.FormatInstructions(instructions))
 		} else {
-			// Show success message
-			uiManager.ShowSuccess(result.Message)
+			fmt.Printf("Success: %s\n", result.Message)
 			if result.NeedsReload {
 				fmt.Println("请重启终端或执行 source 命令使更改生效。")
 			}

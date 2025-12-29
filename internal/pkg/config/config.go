@@ -32,6 +32,7 @@ type ProviderConfig struct {
 	APIKey      string  `mapstructure:"api_key"`
 	Model       string  `mapstructure:"model"`
 	Endpoint    string  `mapstructure:"endpoint"`
+	BaseURL     string  `mapstructure:"base_url"` // Added for compatibility
 	Temperature float32 `mapstructure:"temperature"`
 	MaxTokens   int     `mapstructure:"max_tokens"`
 }
