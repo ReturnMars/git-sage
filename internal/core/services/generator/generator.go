@@ -18,6 +18,7 @@ import (
 // Service defines the interface for the commit message generator.
 type Service interface {
 	Generate(ctx context.Context, diff *domain.Diff, hint string) (*domain.CommitMessage, error)
+	GenerateWithStream(ctx context.Context, diff *domain.Diff, hint string, onChunk func(chunk string)) (*domain.CommitMessage, error)
 }
 type SmartGenerator struct {
 	aiModel       ports.AIModel
@@ -136,6 +137,25 @@ func (g *SmartGenerator) generateDirect(ctx context.Context, d *domain.Diff, hin
 
 	// Call AI
 	rawResponse, err := g.aiModel.GenerateCommitMessage(ctx, systemPrompt, userPrompt)
+	if err != nil {
+		return nil, err
+	}
+
+	return g.parseResponse(rawResponse), nil
+}
+
+// GenerateWithStream generates a commit message using streaming API.
+// The onChunk callback is called for each chunk of text as it's received from AI.
+func (g *SmartGenerator) GenerateWithStream(ctx context.Context, d *domain.Diff, hint string, onChunk func(chunk string)) (*domain.CommitMessage, error) {
+	// Build Prompts
+	userPrompt, err := g.promptBuilder.BuildUserPrompt(d, hint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build prompt: %w", err)
+	}
+	systemPrompt := g.promptBuilder.GetSystemPrompt()
+
+	// Call AI with streaming
+	rawResponse, err := g.aiModel.GenerateCommitMessageStream(ctx, systemPrompt, userPrompt, onChunk)
 	if err != nil {
 		return nil, err
 	}

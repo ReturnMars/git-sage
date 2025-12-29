@@ -80,24 +80,45 @@ func (a *Adapter) Commit(ctx context.Context, message *domain.CommitMessage) err
 	return err
 }
 
-// Push pushes the current branch to the remote.
+// Push pushes the current branch to the remote using standard workflow:
+// 1. git fetch
+// 2. git pull --rebase (only if upstream exists)
+// 3. git push
 func (a *Adapter) Push(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second) // Longer timeout for network
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second) // Longer timeout for network operations
 	defer cancel()
 
 	// Determine if upstream is set
 	hasUpstream, _ := a.HasUpstream(ctx)
-	if !hasUpstream {
+
+	if hasUpstream {
+		// Standard workflow: fetch + pull --rebase + push
+		// 1. Fetch latest from remote
+		if _, err := a.runGit(ctx, "fetch"); err != nil {
+			return fmt.Errorf("fetch failed: %w", err)
+		}
+
+		// 2. Pull with rebase to maintain linear history
+		if _, err := a.runGit(ctx, "pull", "--rebase"); err != nil {
+			return fmt.Errorf("pull --rebase failed (you may have conflicts to resolve): %w", err)
+		}
+
+		// 3. Push
+		if _, err := a.runGit(ctx, "push"); err != nil {
+			return fmt.Errorf("push failed: %w", err)
+		}
+	} else {
+		// No upstream: set upstream and push
 		branch, err := a.GetCurrentBranch(ctx)
 		if err != nil {
 			return err
 		}
-		_, err = a.runGit(ctx, "push", "-u", "origin", branch)
-		return err
+		if _, err := a.runGit(ctx, "push", "-u", "origin", branch); err != nil {
+			return fmt.Errorf("push failed: %w", err)
+		}
 	}
 
-	_, err := a.runGit(ctx, "push")
-	return err
+	return nil
 }
 
 // Low-level Helpers

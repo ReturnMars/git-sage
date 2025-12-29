@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai" // For now only OpenAI supported in MVP
@@ -74,6 +75,41 @@ func (a *Adapter) GenerateCommitMessage(ctx context.Context, systemPrompt, userP
 	}
 
 	return resp.Choices[0].Content, nil
+}
+
+// GenerateCommitMessageStream generates a commit message with streaming support.
+// The onChunk callback is called for each chunk of text as it's received.
+func (a *Adapter) GenerateCommitMessageStream(ctx context.Context, systemPrompt, userPrompt string, onChunk func(chunk string)) (string, error) {
+	messages := []llms.MessageContent{
+		llms.TextParts(llms.ChatMessageTypeSystem, systemPrompt),
+		llms.TextParts(llms.ChatMessageTypeHuman, userPrompt),
+	}
+
+	var fullResponse strings.Builder
+
+	resp, err := a.llm.GenerateContent(ctx, messages,
+		llms.WithTemperature(0.2),
+		llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
+			chunkStr := string(chunk)
+			fullResponse.WriteString(chunkStr)
+			if onChunk != nil {
+				onChunk(chunkStr)
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return "", fmt.Errorf("AI generation failed: %w", sanitizeError(err))
+	}
+
+	// If streaming worked, fullResponse has the content
+	// Otherwise, fall back to resp.Choices
+	result := fullResponse.String()
+	if result == "" && len(resp.Choices) > 0 {
+		result = resp.Choices[0].Content
+	}
+
+	return result, nil
 }
 
 // apiKeyPattern matches common API key patterns.

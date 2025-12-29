@@ -111,6 +111,20 @@
   - 更新 `root.go`。
   - 删除 `internal/pkg/pathcheck`。
 
+- [ ] **Task 17: 进阶进度条 UI**
+  - 使用 `bubbles/progress` 实现带百分比的进度条。
+  - 显示当前处理的文件名。
+  - 显示 "Processing file X of Y" 格式。
+  - 修改 `ports.UserInterface` 接口添加 `ShowFileProgress` 方法。
+  - 在 `SmartGenerator` 或 `Workflow` 中添加回调机制传递进度信息。
+
+- [ ] **Task 18: AI 流式输出**
+  - 修改 `ports.AIModel` 接口添加流式生成方法。
+  - 在 `infra/ai/adapter.go` 中使用 `llms.WithStreamingFunc` 实现流式 API。
+  - 修改 `SmartGenerator` 支持流式生成。
+  - 在 UI 层实时显示 AI 生成的内容（使用 Bubble Tea）。
+  - 提升用户体验：用户可以实时看到 AI 正在思考和生成的内容。
+
 - [x] **Task 11: 全局测试与验证**
   - 运行所有单元测试。
   - 执行 `go build` 确保无编译错误。

@@ -36,27 +36,180 @@ func NewConsoleUI() *ConsoleUI {
 	}
 }
 
-// ShowProgress starts a progress indication (e.g. spinner).
+// ShowProgress starts a progress indication.
 // Returns a function to stop the progress.
+// TODO: Task 17 - Implement full progress bar with file count, current file, and percentage
 func (u *ConsoleUI) ShowProgress(msg string) func() {
-	done := make(chan bool)
+	done := make(chan bool, 1)
+	finished := make(chan bool, 1)
+
 	go func() {
-		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		frames := []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
 		i := 0
 		for {
 			select {
 			case <-done:
-				fmt.Printf("\r%s... Done!\n", msg)
+				fmt.Printf("\r%s... Done!                    \n", msg)
+				finished <- true
 				return
 			default:
 				fmt.Printf("\r%s %s...   ", frames[i%len(frames)], msg)
 				i++
+				time.Sleep(120 * time.Millisecond)
+			}
+		}
+	}()
+
+	return func() {
+		done <- true
+		<-finished
+	}
+}
+
+// ShowFileProgress displays a progress bar with file information.
+// Phase 1: Shows file-by-file progress with animation
+// Phase 2: Shows spinner while waiting for AI response
+func (u *ConsoleUI) ShowFileProgress(totalFiles int) (chan<- ports.FileProgress, func()) {
+	progressChan := make(chan ports.FileProgress, 100)
+	done := make(chan bool, 1)
+	finished := make(chan bool, 1)
+
+	go func() {
+		// Styles
+		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+		spinnerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+		spinnerFrames := []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+
+		currentFile := ""
+		currentNum := 0
+		phase := 1 // 1 = analyzing files, 2 = waiting for AI
+		spinnerIdx := 0
+		lastUpdate := time.Now()
+		filesComplete := false
+
+		for {
+			select {
+			case <-done:
+				// Print final success state
+				fmt.Print("\r" + strings.Repeat(" ", 100) + "\r")
+				if !filesComplete {
+					fmt.Printf("  %s Analyzed %d files\n", successStyle.Render("✓"), totalFiles)
+				}
+				fmt.Printf("  %s Commit message generated!\n", successStyle.Render("✓"))
+				finished <- true
+				return
+
+			case progress, ok := <-progressChan:
+				if !ok {
+					continue
+				}
+				currentNum = progress.Current
+				currentFile = progress.FileName
+				phase = 1
+				lastUpdate = time.Now()
+
+				// Truncate filename if too long
+				displayName := currentFile
+				if len(displayName) > 40 {
+					displayName = "..." + displayName[len(displayName)-37:]
+				}
+
+				// Multi-line progress display (just update the current line)
+				spinner := spinnerStyle.Render(spinnerFrames[spinnerIdx%len(spinnerFrames)])
+				spinnerIdx++
+				progressLine := fmt.Sprintf("  %s Analyzing files %s (%d/%d)%s",
+					spinner,
+					fileStyle.Render(displayName),
+					currentNum, totalFiles,
+					strings.Repeat(" ", 20))
+				fmt.Printf("\r%s", progressLine)
+
+			default:
+				// If no progress for a while, switch to spinner (waiting for AI)
+				if time.Since(lastUpdate) > 200*time.Millisecond && currentNum > 0 {
+					if phase == 1 {
+						phase = 2
+						// Print completed files line
+						fmt.Print("\r" + strings.Repeat(" ", 100) + "\r")
+						fmt.Printf("  %s Analyzed %d files\n", successStyle.Render("✓"), totalFiles)
+						filesComplete = true
+					}
+				}
+
+				if phase == 2 {
+					spinnerIdx++
+					spinner := spinnerStyle.Render(spinnerFrames[spinnerIdx%len(spinnerFrames)])
+					aiHint := dimStyle.Render("(this may take a moment)")
+					fmt.Printf("\r  %s Generating commit message... %s%s", spinner, aiHint, strings.Repeat(" ", 20))
+				}
 				time.Sleep(80 * time.Millisecond)
 			}
 		}
 	}()
-	return func() {
+
+	return progressChan, func() {
 		done <- true
+		<-finished
+	}
+}
+
+// ShowStreamingText displays streaming text from AI in real-time.
+// Creates a beautiful box that updates as chunks arrive.
+func (u *ConsoleUI) ShowStreamingText(title string) (chan<- string, func()) {
+	textChan := make(chan string, 100)
+	done := make(chan bool, 1)
+	finished := make(chan bool, 1)
+
+	go func() {
+		// Styles
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		spinnerFrames := []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+
+		var content strings.Builder
+		spinnerIdx := 0
+
+		// Print title
+		fmt.Printf("\n  %s %s\n", titleStyle.Render("🤖"), titleStyle.Render(title))
+		fmt.Println(dimStyle.Render("  ─────────────────────────────────────────"))
+
+		for {
+			select {
+			case <-done:
+				// Clear spinner line and print final content
+				fmt.Print("\r" + strings.Repeat(" ", 60) + "\r")
+				fmt.Println(dimStyle.Render("  ─────────────────────────────────────────"))
+				finished <- true
+				return
+
+			case chunk, ok := <-textChan:
+				if !ok {
+					continue
+				}
+				content.WriteString(chunk)
+
+				// Print chunk directly (streaming effect)
+				fmt.Print(textStyle.Render(chunk))
+
+			default:
+				// Animate spinner to show activity
+				spinnerIdx++
+				spinner := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(spinnerFrames[spinnerIdx%len(spinnerFrames)])
+				// Only show spinner if we're still waiting for content
+				if content.Len() == 0 {
+					fmt.Printf("\r  %s ", spinner)
+				}
+				time.Sleep(80 * time.Millisecond)
+			}
+		}
+	}()
+
+	return textChan, func() {
+		done <- true
+		<-finished
 	}
 }
 

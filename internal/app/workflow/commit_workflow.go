@@ -95,10 +95,24 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 
 	// 2. Generate Loop
 	for {
-		// Start Generation
-		stopSpinner = w.ui.ShowProgress("Generating commit message...")
+		// Show file progress bar
+		totalFiles := len(stagedDiff.Files)
+		progressChan, stopProgress := w.ui.ShowFileProgress(totalFiles)
+
+		// Send file progress updates in a goroutine
+		go func() {
+			for i, file := range stagedDiff.Files {
+				progressChan <- ports.FileProgress{
+					Current:  i + 1,
+					FileName: file.FilePath,
+				}
+			}
+		}()
+
+		// Generate message - progress bar will auto-switch to "Waiting for AI" phase
 		msg, err := w.generator.Generate(ctx, stagedDiff, hint)
-		stopSpinner()
+		stopProgress()
+
 		if err != nil {
 			w.ui.ShowError(err)
 			return err
@@ -114,6 +128,16 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 				return err
 			}
 			w.ui.ShowSuccess("Changes committed successfully!")
+
+			// Auto-push in auto-accept mode
+			stopSpinner = w.ui.ShowProgress("Pushing to remote...")
+			if pushErr := w.git.Push(ctx); pushErr != nil {
+				stopSpinner()
+				w.ui.ShowError(pushErr)
+				return pushErr
+			}
+			stopSpinner()
+			w.ui.ShowSuccess("Changes pushed to remote!")
 			return nil
 		}
 
@@ -143,6 +167,19 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 				return err
 			}
 			w.ui.ShowSuccess("Changes committed successfully!")
+
+			// Ask if user wants to push
+			shoudPush, _ := w.ui.PromptConfirm("Push changes to remote?")
+			if shoudPush {
+				stopSpinner = w.ui.ShowProgress("Pushing to remote...")
+				if pushErr := w.git.Push(ctx); pushErr != nil {
+					stopSpinner()
+					w.ui.ShowError(pushErr)
+					return pushErr
+				}
+				stopSpinner()
+				w.ui.ShowSuccess("Changes pushed to remote!")
+			}
 			return nil
 		}
 	}
