@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -66,93 +68,167 @@ func (u *ConsoleUI) ShowProgress(msg string) func() {
 	}
 }
 
-// ShowFileProgress displays a progress bar with file information.
-// Phase 1: Shows file-by-file progress with animation
-// Phase 2: Shows spinner while waiting for AI response
+// ShowFileProgress displays a progress bar with file information using Bubble Tea.
 func (u *ConsoleUI) ShowFileProgress(totalFiles int) (chan<- ports.FileProgress, func()) {
-	progressChan := make(chan ports.FileProgress, 100)
-	done := make(chan bool, 1)
-	finished := make(chan bool, 1)
+	// Initialize models
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
+	prog := progress.New(
+		progress.WithDefaultGradient(),
+		progress.WithWidth(40),
+		progress.WithoutPercentage(),
+	)
+
+	model := progressModel{
+		spinner:    s,
+		progress:   prog,
+		totalFiles: totalFiles,
+		phase:      1,
+	}
+
+	// Use os.Stderr to avoid interfering with stdout if strictly needed,
+	// but p.Run() usually handles term env well.
+	p := tea.NewProgram(model)
+
+	// Channel for external updates
+	progressChan := make(chan ports.FileProgress)
+	doneChan := make(chan struct{})
+
+	// Run program in background
+	// Note: p.Run() is blocking, so we run it in a goroutine?
+	// Actually, usually p.Run() blocks until Quit.
+	// But we need the workflow to continue.
+	// So yes, run UI in goroutine.
 	go func() {
-		// Styles
-		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		spinnerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-		fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-		spinnerFrames := []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+		if _, err := p.Run(); err != nil {
+			fmt.Printf("Alas, there's been an error: %v", err)
+		}
+		close(doneChan)
+	}()
 
-		currentFile := ""
-		currentNum := 0
-		phase := 1 // 1 = analyzing files, 2 = waiting for AI
-		spinnerIdx := 0
-		lastUpdate := time.Now()
-		filesComplete := false
-
-		for {
-			select {
-			case <-done:
-				// Print final success state
-				fmt.Print("\r" + strings.Repeat(" ", 100) + "\r")
-				if !filesComplete {
-					fmt.Printf("  %s Analyzed %d files\n", successStyle.Render("✓"), totalFiles)
-				}
-				fmt.Printf("  %s Commit message generated!\n", successStyle.Render("✓"))
-				finished <- true
-				return
-
-			case progress, ok := <-progressChan:
-				if !ok {
-					continue
-				}
-				currentNum = progress.Current
-				currentFile = progress.FileName
-				phase = 1
-				lastUpdate = time.Now()
-
-				// Truncate filename if too long
-				displayName := currentFile
-				if len(displayName) > 40 {
-					displayName = "..." + displayName[len(displayName)-37:]
-				}
-
-				// Multi-line progress display (just update the current line)
-				spinner := spinnerStyle.Render(spinnerFrames[spinnerIdx%len(spinnerFrames)])
-				spinnerIdx++
-				progressLine := fmt.Sprintf("  %s Analyzing files %s (%d/%d)%s",
-					spinner,
-					fileStyle.Render(displayName),
-					currentNum, totalFiles,
-					strings.Repeat(" ", 20))
-				fmt.Printf("\r%s", progressLine)
-
-			default:
-				// If no progress for a while, switch to spinner (waiting for AI)
-				if time.Since(lastUpdate) > 200*time.Millisecond && currentNum > 0 {
-					if phase == 1 {
-						phase = 2
-						// Print completed files line
-						fmt.Print("\r" + strings.Repeat(" ", 100) + "\r")
-						fmt.Printf("  %s Analyzed %d files\n", successStyle.Render("✓"), totalFiles)
-						filesComplete = true
-					}
-				}
-
-				if phase == 2 {
-					spinnerIdx++
-					spinner := spinnerStyle.Render(spinnerFrames[spinnerIdx%len(spinnerFrames)])
-					aiHint := dimStyle.Render("(this may take a moment)")
-					fmt.Printf("\r  %s Generating commit message... %s%s", spinner, aiHint, strings.Repeat(" ", 20))
-				}
-				time.Sleep(80 * time.Millisecond)
-			}
+	// Proxy updates from channel to program
+	go func() {
+		for pMsg := range progressChan {
+			p.Send(fileProgressMsg(pMsg))
 		}
 	}()
 
 	return progressChan, func() {
-		done <- true
-		<-finished
+		// Signal done
+		p.Send(progressDoneMsg{})
+		// Wait for program to finish
+		<-doneChan
 	}
+}
+
+// -- Bubble Tea Model for Progress --
+
+type fileProgressMsg ports.FileProgress
+type progressDoneMsg struct{}
+type switchToSpinnerMsg struct{}
+
+type progressModel struct {
+	spinner    spinner.Model
+	progress   progress.Model
+	totalFiles int
+	current    int
+	filename   string
+	phase      int // 1: Analysis, 2: AI Generation
+	done       bool
+	quitting   bool
+}
+
+func (m progressModel) Init() tea.Cmd {
+	return m.spinner.Tick
+}
+
+func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		return m, nil
+
+	case fileProgressMsg:
+		m.current = msg.Current
+		m.filename = msg.FileName
+		m.phase = 1
+
+		// Calculate percentage
+		pct := float64(m.current) / float64(m.totalFiles)
+		cmd := m.progress.SetPercent(pct)
+
+		// Check if done analyzing
+		if m.current >= m.totalFiles {
+			// Auto switch to phase 2 after a brief moment or immediately?
+			// Let's switch immediately to spinner
+			return m, tea.Batch(cmd, func() tea.Msg {
+				return switchToSpinnerMsg{}
+			})
+		}
+		return m, cmd
+
+	case switchToSpinnerMsg:
+		m.phase = 2
+		return m, m.spinner.Tick
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		if m.phase == 2 {
+			m.spinner, cmd = m.spinner.Update(msg)
+		}
+		return m, cmd
+
+	case progress.FrameMsg:
+		newModel, cmd := m.progress.Update(msg)
+		if n, ok := newModel.(progress.Model); ok {
+			m.progress = n
+		}
+		return m, cmd
+
+	case progressDoneMsg:
+		m.done = true
+		m.quitting = true
+		return m, tea.Quit
+	}
+
+	return m, nil
+}
+
+func (m progressModel) View() string {
+	if m.quitting {
+		// Final success message
+		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+		return fmt.Sprintf("  %s Analyzed %d files\n  %s Commit message generated!\n",
+			successStyle.Render("✓"), m.totalFiles,
+			successStyle.Render("✓"))
+	}
+
+	if m.phase == 1 {
+		// Progress Bar View
+		// 📁 [████░░] internal/foo.go
+		fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+
+		// Truncate filename
+		displayName := m.filename
+		if len(displayName) > 30 {
+			displayName = "..." + displayName[len(displayName)-27:]
+		}
+
+		pad := strings.Repeat(" ", 30-len(displayName)) // simple padding
+
+		return fmt.Sprintf("\r  %s %s%s",
+			m.progress.View(),
+			fileStyle.Render(displayName),
+			pad)
+	}
+
+	// Phase 2: Spinner
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	return fmt.Sprintf("\r  %s Generating commit message... %s", m.spinner.View(), dimStyle.Render("(this may take a moment)   "))
 }
 
 // ShowStreamingText displays streaming text from AI in real-time.
