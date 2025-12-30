@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -231,75 +232,147 @@ func (m progressModel) View() string {
 	return fmt.Sprintf("\r  %s Generating commit message... %s", m.spinner.View(), dimStyle.Render("(this may take a moment)   "))
 }
 
-// ShowStreamingText displays streaming text from AI in real-time.
-// Creates a beautiful box that updates as chunks arrive.
+// ShowStreamingText displays streaming text from AI in real-time using Bubble Tea.
 func (u *ConsoleUI) ShowStreamingText(title string) (chan<- string, func()) {
-	textChan := make(chan string, 100)
-	done := make(chan bool, 1)
-	finished := make(chan bool, 1)
+	// Initialize spinner
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
+	model := streamingModel{
+		spinner: s,
+		title:   title,
+	}
+
+	p := tea.NewProgram(model)
+
+	textChan := make(chan string)
+	doneChan := make(chan struct{})
 
 	go func() {
-		// Styles
-		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-		spinnerFrames := []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+		if _, err := p.Run(); err != nil {
+			fmt.Printf("Error: %v", err)
+		}
+		close(doneChan)
+	}()
 
-		var content strings.Builder
-		spinnerIdx := 0
-
-		// Print title
-		fmt.Printf("\n  %s %s\n", titleStyle.Render("🤖"), titleStyle.Render(title))
-		fmt.Println(dimStyle.Render("  ─────────────────────────────────────────"))
-
-		for {
-			select {
-			case <-done:
-				// Clear spinner line and print final content
-				fmt.Print("\r" + strings.Repeat(" ", 60) + "\r")
-				fmt.Println(dimStyle.Render("  ─────────────────────────────────────────"))
-				finished <- true
-				return
-
-			case chunk, ok := <-textChan:
-				if !ok {
-					continue
-				}
-				content.WriteString(chunk)
-
-				// Print chunk directly (streaming effect)
-				fmt.Print(textStyle.Render(chunk))
-
-			default:
-				// Animate spinner to show activity
-				spinnerIdx++
-				spinner := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(spinnerFrames[spinnerIdx%len(spinnerFrames)])
-				// Only show spinner if we're still waiting for content
-				if content.Len() == 0 {
-					fmt.Printf("\r  %s ", spinner)
-				}
-				time.Sleep(80 * time.Millisecond)
-			}
+	go func() {
+		for chunk := range textChan {
+			p.Send(streamMsg(chunk))
 		}
 	}()
 
 	return textChan, func() {
-		done <- true
-		<-finished
+		p.Send(streamDoneMsg{})
+		<-doneChan
 	}
+}
+
+// -- Bubble Tea Model for Streaming --
+
+type streamMsg string
+type streamDoneMsg struct{}
+
+type streamingModel struct {
+	spinner spinner.Model
+	title   string
+	content strings.Builder
+	done    bool
+}
+
+func (m streamingModel) Init() tea.Cmd {
+	return m.spinner.Tick
+}
+
+func (m streamingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+	case streamMsg:
+		m.content.WriteString(string(msg))
+		return m, nil
+	case streamDoneMsg:
+		m.done = true
+		return m, tea.Quit
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		if !m.done {
+			m.spinner, cmd = m.spinner.Update(msg)
+		}
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m streamingModel) View() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	header := fmt.Sprintf("\n  %s %s\n%s\n",
+		titleStyle.Render("🤖"),
+		titleStyle.Render(m.title),
+		dimStyle.Render("  ─────────────────────────────────────────"))
+
+	body := m.content.String()
+
+	footer := ""
+	if !m.done {
+		footer = fmt.Sprintf("\n  %s", m.spinner.View())
+	} else {
+		footer = fmt.Sprintf("\n%s\n", dimStyle.Render("  ─────────────────────────────────────────"))
+	}
+
+	return header + body + footer
 }
 
 // ReviewMessage presents the commit message to the user for review.
 func (u *ConsoleUI) ReviewMessage(ctx context.Context, msg *domain.CommitMessage) (ports.UserAction, *domain.CommitMessage, error) {
-	fmt.Println(u.styles.Title.Render("Generated Commit Message"))
-	fmt.Println(u.styles.Border.Render(
-		fmt.Sprintf("%s\n\n%s",
+	// Prepare content
+	var content string
+	if msg.Body != "" {
+		content = fmt.Sprintf("%s\n\n%s",
 			u.styles.Subject.Render(msg.Subject),
 			u.styles.Body.Render(msg.Body),
-		),
-	))
+		)
+	} else {
+		content = u.styles.Subject.Render(msg.Subject)
+	}
 
-	model := newReviewModel()
+	// Calculate content lines to adjust viewport height
+	// We count newlines. Soft-wrapping isn't accounted for unless using lipgloss.Width.
+	// For better accuracy with long lines, we could improve this, but for now strict line count is safer.
+	lines := strings.Count(content, "\n") + 1
+
+	// Dynamic height: min 5 (to accommodate subject + spacing + minimal body or padding), max 15
+	const minHeight = 5
+	const maxHeight = 15
+
+	height := lines
+	// Since we wrap border OUTSIDE, the viewport height is purely for content.
+
+	if height < minHeight {
+		height = minHeight
+	}
+	if height > maxHeight {
+		height = maxHeight
+	}
+
+	const width = 80
+
+	vp := viewport.New(width, height)
+	vp.SetContent(content)
+	// Do NOT set vp.Style = border here, as it eats into the height layout.
+	// We will render border in the View() method.
+
+	model := reviewModel{
+		viewport:    vp,
+		title:       u.styles.Title.Render("Generated Commit Message"),
+		borderStyle: u.styles.Border,
+		action:      ports.ActionCancel,
+	}
+
 	p := tea.NewProgram(model)
 	finalModel, err := p.Run()
 	if err != nil {
@@ -435,17 +508,17 @@ func NewStyles() *Styles {
 
 // Internal BubbleTea Model for Review
 type reviewModel struct {
-	action ports.UserAction
-	done   bool
-}
-
-func newReviewModel() reviewModel {
-	return reviewModel{action: ports.ActionCancel}
+	viewport    viewport.Model
+	title       string
+	borderStyle lipgloss.Style
+	action      ports.UserAction
+	done        bool
 }
 
 func (m reviewModel) Init() tea.Cmd { return nil }
 
 func (m reviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -463,9 +536,16 @@ func (m reviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	}
-	return m, nil
+
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
 }
 
 func (m reviewModel) View() string {
-	return "\n[a] Accept  [e] Edit  [r] Regenerate  [q] Cancel\n"
+	view := m.borderStyle.Render(m.viewport.View())
+	return fmt.Sprintf("%s\n%s\n%s",
+		m.title,
+		view,
+		"\n[a] Accept  [e] Edit  [r] Regenerate  [q] Cancel\n",
+	)
 }
