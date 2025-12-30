@@ -27,15 +27,19 @@ type Processor interface {
 
 // DefaultProcessor implements the Processor interface.
 type DefaultProcessor struct {
-	threshold int
+	threshold      int
+	ignorePatterns []string
 }
 
 // NewProcessor creates a new DefaultProcessor.
-func NewProcessor(threshold int) *DefaultProcessor {
+func NewProcessor(threshold int, ignorePatterns []string) *DefaultProcessor {
 	if threshold <= 0 {
 		threshold = DefaultDiffSizeThreshold
 	}
-	return &DefaultProcessor{threshold: threshold}
+	return &DefaultProcessor{
+		threshold:      threshold,
+		ignorePatterns: ignorePatterns,
+	}
 }
 
 // Process filters lock files and calculates if chunking is needed.
@@ -198,7 +202,7 @@ func (p *DefaultProcessor) filterAndCalculate(files []domain.DiffFile) ([]domain
 	totalSize := 0
 
 	for _, file := range files {
-		if p.isLockFile(file.FilePath) {
+		if p.isIgnoredPath(file.FilePath) {
 			continue
 		}
 		filtered = append(filtered, file)
@@ -207,9 +211,12 @@ func (p *DefaultProcessor) filterAndCalculate(files []domain.DiffFile) ([]domain
 	return filtered, totalSize
 }
 
-func (p *DefaultProcessor) isLockFile(path string) bool {
+func (p *DefaultProcessor) isIgnoredPath(path string) bool {
+	// Normalize path
 	lower := strings.ToLower(path)
-	return strings.HasSuffix(lower, "package-lock.json") ||
+
+	// 1. Lock files (Keep logic)
+	if strings.HasSuffix(lower, "package-lock.json") ||
 		strings.HasSuffix(lower, "yarn.lock") ||
 		strings.HasSuffix(lower, "pnpm-lock.yaml") ||
 		strings.HasSuffix(lower, "go.sum") ||
@@ -217,6 +224,65 @@ func (p *DefaultProcessor) isLockFile(path string) bool {
 		strings.HasSuffix(lower, "gemfile.lock") ||
 		strings.HasSuffix(lower, "composer.lock") ||
 		strings.HasSuffix(lower, "mix.lock") ||
-		strings.HasSuffix(lower, "poetry.lock") ||
-		strings.HasSuffix(lower, "flute.lock") // Just in case
+		strings.HasSuffix(lower, "poetry.lock") {
+		return true
+	}
+
+	// 2. Contains ignored directories
+	ignoredDirs := []string{
+		"node_modules/",
+		"bower_components/",
+		"vendor/",
+		"dist/",
+		"build/",
+		"target/",
+		".idea/",
+		".vscode/",
+		".git/",
+		"coverage/",
+		"tmp/",
+		"temp/",
+	}
+
+	for _, dir := range ignoredDirs {
+		// Use forward slash for consistency in regex/strings (git uses /)
+		// Check if path contains the ignored directory
+		if strings.Contains(strings.ReplaceAll(lower, "\\", "/"), dir) {
+			return true
+		}
+	}
+
+	// 2.5. Custom ignore patterns
+	for _, pattern := range p.ignorePatterns {
+		if pattern == "" {
+			continue
+		}
+		// Simple containment check for now, can be improved to glob with filepath.Match
+		normPattern := strings.ToLower(pattern)
+		if strings.Contains(strings.ReplaceAll(lower, "\\", "/"), normPattern) {
+			return true
+		}
+	}
+
+	// 3. Minified files and maps
+	if strings.HasSuffix(lower, ".min.js") ||
+		strings.HasSuffix(lower, ".min.css") ||
+		strings.HasSuffix(lower, ".map") {
+		return true
+	}
+
+	// 4. Large Asset files (common extensions)
+	if strings.HasSuffix(lower, ".svg") ||
+		strings.HasSuffix(lower, ".png") ||
+		strings.HasSuffix(lower, ".jpg") ||
+		strings.HasSuffix(lower, ".jpeg") ||
+		strings.HasSuffix(lower, ".gif") ||
+		strings.HasSuffix(lower, ".ico") ||
+		strings.HasSuffix(lower, ".pdf") ||
+		strings.HasSuffix(lower, ".zip") ||
+		strings.HasSuffix(lower, ".tar.gz") {
+		return true
+	}
+
+	return false
 }

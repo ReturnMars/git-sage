@@ -123,7 +123,7 @@ func runCommit(cmd *cobra.Command, flags *CommitFlags) error {
 	uiAdapter := infra_ui.NewConsoleUI()
 
 	// 2. Initialize Core Services (Core Layer)
-	diffProcessor := diff.NewProcessor(cfg.Git.DiffSizeThreshold)
+	diffProcessor := diff.NewProcessor(cfg.Git.DiffSizeThreshold, cfg.Git.ExcludePatterns)
 	retryStrategy := retry.NewExponentialBackoff(1*time.Second, 10*time.Second)
 	promptBuilder, err := prompt.NewBuilder()
 	if err != nil {

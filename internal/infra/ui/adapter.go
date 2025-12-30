@@ -310,19 +310,32 @@ func (u *ConsoleUI) ShowSuccess(msg string) {
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render(fmt.Sprintf("Success: %s", msg)))
 }
 
-// PromptConfirm prompts the user for confirmation (y/n).
+// PromptConfirm prompts the user for confirmation (Y/n).
 func (u *ConsoleUI) PromptConfirm(msg string) (bool, error) {
-	fmt.Printf("%s [y/N]: ", u.styles.Title.Render(msg))
+	// Use a style without margin to keep prompt on the same line
+	promptStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	fmt.Printf("%s [Y/n]: ", promptStyle.Render(msg))
 
-	// Simple scanner for now
+	// Simple scanner
 	var response string
 	_, err := fmt.Scanln(&response)
-	if err != nil && err.Error() != "unexpected newline" {
-		return false, nil // Treat empty enter as No
+
+	// Handle empty input (Enter key) as Yes
+	if err != nil {
+		if err.Error() == "unexpected newline" {
+			return true, nil
+		}
+		// logic for other errors? usually treat as no or error, let's treat as no for safety unless it's EOF
+		return false, nil
 	}
 
 	response = strings.ToLower(strings.TrimSpace(response))
-	return response == "y" || response == "yes", nil
+	// Default is Yes, so check for explicit No
+	if response == "n" || response == "no" {
+		return false, nil
+	}
+	// Everything else (y, yes, etc.) is Yes
+	return true, nil
 }
 
 // Styles definition
