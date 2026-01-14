@@ -160,7 +160,8 @@ func runCommit(cmd *cobra.Command, flags *CommitFlags) error {
 	// For now, we ignore hint passing from CLI args (future feature)
 	hint := ""
 	if err := commitWorkflow.Run(ctx, hint, flags.Yes); err != nil {
-		return err
+		uiAdapter.ShowError(err)
+		return nil // Return nil because we've already handled/displayed the error
 	}
 
 	return nil

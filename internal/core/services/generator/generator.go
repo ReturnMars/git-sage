@@ -17,7 +17,7 @@ import (
 
 // Service defines the interface for the commit message generator.
 type Service interface {
-	Generate(ctx context.Context, diff *domain.Diff, hint string) (*domain.CommitMessage, error)
+	Generate(ctx context.Context, diff *domain.Diff, hint string, onProgress func(current, total int, filename string)) (*domain.CommitMessage, error)
 	GenerateWithStream(ctx context.Context, diff *domain.Diff, hint string, onChunk func(chunk string)) (*domain.CommitMessage, error)
 }
 type SmartGenerator struct {
@@ -44,7 +44,7 @@ func NewSmartGenerator(ai ports.AIModel, pb *prompt.Builder, dp diff.Processor, 
 }
 
 // Generate orchestrates the commit message generation.
-func (g *SmartGenerator) Generate(ctx context.Context, d *domain.Diff, hint string) (*domain.CommitMessage, error) {
+func (g *SmartGenerator) Generate(ctx context.Context, d *domain.Diff, hint string, onProgress func(current, total int, filename string)) (*domain.CommitMessage, error) {
 	// Try cache first
 	if g.cache != nil {
 		// We need a stable representation of Diff for cache key.
@@ -71,10 +71,13 @@ func (g *SmartGenerator) Generate(ctx context.Context, d *domain.Diff, hint stri
 	if !requiresChunking {
 		// Use callWithRetry for direct generation
 		result, err = g.callWithRetry(ctx, func() (*domain.CommitMessage, error) {
+			if onProgress != nil && len(d.Files) > 0 {
+				onProgress(1, 1, d.Files[0].FilePath)
+			}
 			return g.generateDirect(ctx, d, hint)
 		})
 	} else {
-		result, err = g.generateTwoPhase(ctx, d, hint)
+		result, err = g.generateTwoPhase(ctx, d, hint, onProgress)
 	}
 
 	if err != nil {
@@ -163,11 +166,11 @@ func (g *SmartGenerator) GenerateWithStream(ctx context.Context, d *domain.Diff,
 	return g.parseResponse(rawResponse), nil
 }
 
-func (g *SmartGenerator) generateTwoPhase(ctx context.Context, d *domain.Diff, hint string) (*domain.CommitMessage, error) {
+func (g *SmartGenerator) generateTwoPhase(ctx context.Context, d *domain.Diff, hint string, onProgress func(current, total int, filename string)) (*domain.CommitMessage, error) {
 	// Use DiffProcessor to chunk logic, which now supports hunk splitting
 	chunks := g.diffProcessor.Chunk(d, g.maxChunkSize)
 
-	summaries, err := g.generateSummaries(ctx, chunks)
+	summaries, err := g.generateSummaries(ctx, chunks, onProgress)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +178,7 @@ func (g *SmartGenerator) generateTwoPhase(ctx context.Context, d *domain.Diff, h
 	return g.generateFinalFromSummaries(ctx, summaries, hint)
 }
 
-func (g *SmartGenerator) generateSummaries(ctx context.Context, chunks []*domain.Diff) ([]string, error) {
+func (g *SmartGenerator) generateSummaries(ctx context.Context, chunks []*domain.Diff, onProgress func(current, total int, filename string)) ([]string, error) {
 	var (
 		wg        sync.WaitGroup
 		mu        sync.Mutex
@@ -211,6 +214,16 @@ func (g *SmartGenerator) generateSummaries(ctx context.Context, chunks []*domain
 				return
 			}
 			summaries[i] = rawResp
+
+			// Report progress after successful chunk summarization
+			if onProgress != nil {
+				// We use the first file path of the chunk as a representative filename
+				fname := "multiple files"
+				if len(chunk.Files) > 0 {
+					fname = chunk.Files[0].FilePath
+				}
+				onProgress(i+1, len(chunks), fname)
+			}
 		}()
 	}
 

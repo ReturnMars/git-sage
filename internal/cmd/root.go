@@ -26,7 +26,9 @@ semantic Git commit messages based on staged changes.
 It analyzes your git diff output, sends it to configurable AI providers
 (OpenAI, DeepSeek, Ollama), and presents you with an interactive interface
 to review, edit, and confirm commit messages before execution.`,
-		Version: version,
+		Version:       version,
+		SilenceUsage:  true, // Don't show help on error
+		SilenceErrors: true, // We handle errors ourselves in main.go or via ShowError
 		// PersistentPreRunE runs before any command (including subcommands)
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			return runPathCheckIfNeeded(cmd)

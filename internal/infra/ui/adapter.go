@@ -83,10 +83,10 @@ func (u *ConsoleUI) ShowFileProgress(totalFiles int) (chan<- ports.FileProgress,
 	)
 
 	model := progressModel{
-		spinner:    s,
-		progress:   prog,
-		totalFiles: totalFiles,
-		phase:      1,
+		spinner:  s,
+		progress: prog,
+		total:    totalFiles,
+		phase:    1,
 	}
 
 	// Use os.Stderr to avoid interfering with stdout if strictly needed,
@@ -131,14 +131,15 @@ type progressDoneMsg struct{}
 type switchToSpinnerMsg struct{}
 
 type progressModel struct {
-	spinner    spinner.Model
-	progress   progress.Model
-	totalFiles int
-	current    int
-	filename   string
-	phase      int // 1: Analysis, 2: AI Generation
-	done       bool
-	quitting   bool
+	spinner  spinner.Model
+	progress progress.Model
+	current  int
+	total    int // Dynamic total
+	filename string
+	phaseStr string // Custom phase name
+	phase    int    // 1: Analysis, 2: AI Generation
+	done     bool
+	quitting bool
 }
 
 func (m progressModel) Init() tea.Cmd {
@@ -155,21 +156,20 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fileProgressMsg:
 		m.current = msg.Current
+		if msg.Total > 0 {
+			m.total = msg.Total
+		}
 		m.filename = msg.FileName
-		m.phase = 1
+		if msg.Phase != "" {
+			m.phaseStr = msg.Phase
+			m.phase = 1 // Stay in bar mode if phase is specified
+		}
 
 		// Calculate percentage
-		pct := float64(m.current) / float64(m.totalFiles)
+		pct := float64(m.current) / float64(m.total)
 		cmd := m.progress.SetPercent(pct)
 
-		// Check if done analyzing
-		if m.current >= m.totalFiles {
-			// Auto switch to phase 2 after a brief moment or immediately?
-			// Let's switch immediately to spinner
-			return m, tea.Batch(cmd, func() tea.Msg {
-				return switchToSpinnerMsg{}
-			})
-		}
+		// Check if done with current phase handled externally
 		return m, cmd
 
 	case switchToSpinnerMsg:
@@ -203,28 +203,32 @@ func (m progressModel) View() string {
 	if m.quitting {
 		// Final success message
 		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		return fmt.Sprintf("  %s Analyzed %d files\n  %s Commit message generated!\n",
-			successStyle.Render("✓"), m.totalFiles,
+		return fmt.Sprintf("  %s Analyzed staged changes\n  %s Commit message generated!\n",
+			successStyle.Render("✓"),
 			successStyle.Render("✓"))
 	}
 
 	if m.phase == 1 {
 		// Progress Bar View
-		// 📁 [████░░] internal/foo.go
 		fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+		phaseStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+
+		phaseName := m.phaseStr
+		if phaseName == "" {
+			phaseName = "Analyzing"
+		}
 
 		// Truncate filename
 		displayName := m.filename
-		if len(displayName) > 30 {
-			displayName = "..." + displayName[len(displayName)-27:]
+		if len(displayName) > 25 {
+			displayName = "..." + displayName[len(displayName)-22:]
 		}
 
-		pad := strings.Repeat(" ", 30-len(displayName)) // simple padding
-
-		return fmt.Sprintf("\r  %s %s%s",
+		return fmt.Sprintf("\r  %s %s: %s (%d/%d)   ",
 			m.progress.View(),
+			phaseStyle.Render(phaseName),
 			fileStyle.Render(displayName),
-			pad)
+			m.current, m.total)
 	}
 
 	// Phase 2: Spinner
@@ -449,9 +453,41 @@ func (u *ConsoleUI) editMessageWithEditor(msg *domain.CommitMessage) (*domain.Co
 	return newMsg, nil
 }
 
-// ShowError displays an error.
+// ShowError displays an error with helpful suggestions for common issues.
 func (u *ConsoleUI) ShowError(err error) {
-	fmt.Println(u.styles.Error.Render(fmt.Sprintf("Error: %v", err)))
+	if err == nil {
+		return
+	}
+
+	errMsg := err.Error()
+	statusStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("196")).
+		Padding(0, 1).
+		MarginRight(1).
+		SetString(" ERROR ")
+
+	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+	fmt.Printf("\n%s %s\n", statusStyle.Background(lipgloss.Color("196")).Foreground(lipgloss.Color("255")).Render(), contentStyle.Render(errMsg))
+
+	// Provide helpful suggestions for common errors
+	suggestionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
+
+	if strings.Contains(errMsg, "429") && strings.Contains(strings.ToLower(errMsg), "balance") {
+		fmt.Printf("  %s %s\n",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("💡 Suggestion:"),
+			suggestionStyle.Render("Your AI provider account balance is insufficient. Please check your credit and top up."))
+	} else if strings.Contains(errMsg, "429") {
+		fmt.Printf("  %s %s\n",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("💡 Suggestion:"),
+			suggestionStyle.Render("Rate limit exceeded. Please wait a moment and try again."))
+	} else if strings.Contains(errMsg, "api_key") || strings.Contains(errMsg, "authentication") {
+		fmt.Printf("  %s %s\n",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("💡 Suggestion:"),
+			suggestionStyle.Render("Invalid API key. Use 'gitsage config set provider.api_key' to update it."))
+	}
+	fmt.Println()
 }
 
 // ShowSuccess displays a success message.

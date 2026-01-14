@@ -78,7 +78,9 @@ type UserInterface interface {
 // FileProgress represents progress information for file processing.
 type FileProgress struct {
 	Current  int
+	Total    int // Optional: if > 0, overrides initial total
 	FileName string
+	Phase    string // e.g. "Analyzing", "Summarizing"
 }
 
 // ConfigStore defines the interface for configuration management.

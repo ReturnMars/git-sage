@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/gitsage/gitsage/internal/core/domain"
 	"github.com/gitsage/gitsage/internal/core/ports"
@@ -65,7 +66,6 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 				stageSpinner := w.ui.ShowProgress("Staging all changes...")
 				if stageErr := w.git.StageAll(ctx); stageErr != nil {
 					stageSpinner()
-					w.ui.ShowError(stageErr)
 					return stageErr
 				}
 				stageSpinner()
@@ -99,18 +99,28 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 		totalFiles := len(stagedDiff.Files)
 		progressChan, stopProgress := w.ui.ShowFileProgress(totalFiles)
 
-		// Send file progress updates in a goroutine
-		go func() {
-			for i, file := range stagedDiff.Files {
-				progressChan <- ports.FileProgress{
-					Current:  i + 1,
-					FileName: file.FilePath,
-				}
+		// Send initial file analysis progress
+		for i, file := range stagedDiff.Files {
+			progressChan <- ports.FileProgress{
+				Current:  i + 1,
+				Total:    totalFiles,
+				FileName: file.FilePath,
+				Phase:    "Analyzing",
 			}
-		}()
+			// Small sleep to make it visible for very fast analysis
+			time.Sleep(50 * time.Millisecond)
+		}
 
 		// Generate message - progress bar will auto-switch to "Waiting for AI" phase
-		msg, err := w.generator.Generate(ctx, stagedDiff, hint)
+		// as it reaches 100% or transitions to summarizing chunks.
+		msg, err := w.generator.Generate(ctx, stagedDiff, hint, func(current, total int, filename string) {
+			progressChan <- ports.FileProgress{
+				Current:  current,
+				Total:    total,
+				FileName: filename,
+				Phase:    "Summarizing",
+			}
+		})
 		stopProgress()
 
 		if err != nil {
@@ -124,7 +134,6 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 			err := w.git.Commit(ctx, msg)
 			stopSpinner()
 			if err != nil {
-				w.ui.ShowError(err)
 				return err
 			}
 			w.ui.ShowSuccess("Changes committed successfully!")
@@ -144,7 +153,6 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 		// 3. Review Loop (Edit/Regenerate cycle)
 		action, finalMsg, err := w.runReviewLoop(ctx, msg)
 		if err != nil {
-			w.ui.ShowError(err)
 			return err
 		}
 
@@ -163,7 +171,6 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 			err := w.git.Commit(ctx, finalMsg)
 			stopSpinner()
 			if err != nil {
-				w.ui.ShowError(err)
 				return err
 			}
 			w.ui.ShowSuccess("Changes committed successfully!")
