@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/gitsage/gitsage/internal/core/domain"
 	"github.com/gitsage/gitsage/internal/core/ports"
@@ -343,26 +344,24 @@ func (m streamingModel) View() string {
 
 // ReviewMessage presents the commit message to the user for review.
 func (u *ConsoleUI) ReviewMessage(ctx context.Context, msg *domain.CommitMessage) (ports.UserAction, *domain.CommitMessage, error) {
-	// Prepare content with explicit width for wrapping
-	// We insert zero-width spaces between CJK characters to allow the word-wrapper to break them
-	contentWidth := 74
-	subjectText := insertBreakPoints(msg.Subject)
-	subject := u.styles.Subject.Width(contentWidth).Render(subjectText)
+	const contentWidth = 72
+
+	// Apply styles separately
+	subject := u.styles.Subject.Render(wrapCJK(msg.Subject, contentWidth))
 	body := ""
 	if msg.Body != "" {
-		bodyText := insertBreakPoints(msg.Body)
-		body = u.styles.Body.Width(contentWidth).Render(bodyText)
+		body = u.styles.Body.Render(wrapCJK(msg.Body, contentWidth))
 	}
 
-	content := subject
+	renderedContent := subject
 	if body != "" {
-		content += "\n\n" + body
+		renderedContent += "\n\n" + body
 	}
 
 	// Calculate content cells and height accurately
-	contentHeight := lipgloss.Height(content)
+	contentHeight := lipgloss.Height(renderedContent)
 
-	// Dynamic height: min 5, max 25 (allowing more space for wrapped content)
+	// Dynamic height: min 5, max 25
 	const minHeight = 5
 	const maxHeight = 25
 
@@ -374,10 +373,9 @@ func (u *ConsoleUI) ReviewMessage(ctx context.Context, msg *domain.CommitMessage
 		height = maxHeight
 	}
 
-	const viewportWidth = 80 // Control the viewport container width
-
+	const viewportWidth = 74
 	vp := viewport.New(viewportWidth, height)
-	vp.SetContent(content)
+	vp.SetContent(renderedContent)
 
 	model := reviewModel{
 		viewport:    vp,
@@ -549,27 +547,104 @@ type Styles struct {
 	Border  lipgloss.Style
 }
 
-// insertBreakPoints inserts zero-width spaces after CJK characters to allow word-wrapping
-func insertBreakPoints(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		b.WriteRune(r)
-		// Basic CJK Unified Ideographs block
-		if (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF) || (r >= 0xF900 && r <= 0xFAFF) {
-			b.WriteRune('\u200B')
+// wrapCJK wraps text to a visual width, correctly handling CJK and English words.
+func wrapCJK(s string, limit int) string {
+	lines := strings.Split(s, "\n")
+	var result []string
+
+	for _, line := range lines {
+		if line == "" {
+			result = append(result, "")
+			continue
+		}
+
+		var b strings.Builder
+		currentWidth := 0
+		runes := []rune(line)
+
+		for i := 0; i < len(runes); {
+			r := runes[i]
+			rw := runewidth.RuneWidth(r)
+
+			// If it's a space at the start of a line, skip it
+			if r == ' ' && currentWidth == 0 {
+				i++
+				continue
+			}
+
+			// If it's a CJK character, it's a break point
+			isCJK := (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF)
+
+			if isCJK {
+				if currentWidth+rw > limit && currentWidth > 0 {
+					result = append(result, b.String())
+					b.Reset()
+					currentWidth = 0
+				}
+				b.WriteRune(r)
+				currentWidth += rw
+				i++
+			} else {
+				// Non-CJK: collect word
+				j := i
+				var word strings.Builder
+				wordWidth := 0
+				for j < len(runes) {
+					curr := runes[j]
+					// Break word at space or CJK
+					if curr == ' ' || (curr >= 0x4E00 && curr <= 0x9FFF) || (curr >= 0x3400 && curr <= 0x4DBF) {
+						break
+					}
+					word.WriteRune(curr)
+					wordWidth += runewidth.RuneWidth(curr)
+					j++
+				}
+
+				if word.Len() > 0 {
+					// If word doesn't fit in remaining space, move to next line
+					if currentWidth+wordWidth > limit && currentWidth > 0 {
+						result = append(result, strings.TrimRight(b.String(), " "))
+						b.Reset()
+						currentWidth = 0
+					}
+					b.WriteString(word.String())
+					currentWidth += wordWidth
+					i = j
+				} else if r == ' ' {
+					// Handle space
+					if currentWidth+1 <= limit {
+						b.WriteRune(' ')
+						currentWidth++
+					}
+					i++
+				} else {
+					// Other symbols
+					if currentWidth+rw > limit && currentWidth > 0 {
+						result = append(result, b.String())
+						b.Reset()
+						currentWidth = 0
+					}
+					b.WriteRune(r)
+					currentWidth += rw
+					i++
+				}
+			}
+		}
+		if b.Len() > 0 {
+			result = append(result, b.String())
 		}
 	}
-	return b.String()
+
+	return strings.Join(result, "\n")
 }
 
 func NewStyles() *Styles {
-	const contentWidth = 76 // Wider content for better utilization
 	return &Styles{
 		Title:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).MarginBottom(1),
-		Subject: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220")).Width(contentWidth),
-		Body:    lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Width(contentWidth),
+		Subject: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")), // Bubble Tea Pink
+		Body:    lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
 		Error:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")),
-		Border:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1), // Minimal vertical padding
+		Border:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1),
 	}
 }
 
