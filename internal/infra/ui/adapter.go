@@ -344,11 +344,14 @@ func (m streamingModel) View() string {
 // ReviewMessage presents the commit message to the user for review.
 func (u *ConsoleUI) ReviewMessage(ctx context.Context, msg *domain.CommitMessage) (ports.UserAction, *domain.CommitMessage, error) {
 	// Prepare content with explicit width for wrapping
-	contentWidth := 70
-	subject := u.styles.Subject.Width(contentWidth).Render(msg.Subject)
+	// We insert zero-width spaces between CJK characters to allow the word-wrapper to break them
+	contentWidth := 74
+	subjectText := insertBreakPoints(msg.Subject)
+	subject := u.styles.Subject.Width(contentWidth).Render(subjectText)
 	body := ""
 	if msg.Body != "" {
-		body = u.styles.Body.Width(contentWidth).Render(msg.Body)
+		bodyText := insertBreakPoints(msg.Body)
+		body = u.styles.Body.Width(contentWidth).Render(bodyText)
 	}
 
 	content := subject
@@ -546,14 +549,27 @@ type Styles struct {
 	Border  lipgloss.Style
 }
 
+// insertBreakPoints inserts zero-width spaces after CJK characters to allow word-wrapping
+func insertBreakPoints(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		b.WriteRune(r)
+		// Basic CJK Unified Ideographs block
+		if (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF) || (r >= 0xF900 && r <= 0xFAFF) {
+			b.WriteRune('\u200B')
+		}
+	}
+	return b.String()
+}
+
 func NewStyles() *Styles {
-	const contentWidth = 74 // Widened for better Chinese text support (Container is 80)
+	const contentWidth = 76 // Wider content for better utilization
 	return &Styles{
 		Title:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).MarginBottom(1),
 		Subject: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220")).Width(contentWidth),
 		Body:    lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Width(contentWidth),
 		Error:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")),
-		Border:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 1), // Slightly reduced padding for more content space
+		Border:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1), // Minimal vertical padding
 	}
 }
 
