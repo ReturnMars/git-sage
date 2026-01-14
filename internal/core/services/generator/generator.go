@@ -170,9 +170,19 @@ func (g *SmartGenerator) generateTwoPhase(ctx context.Context, d *domain.Diff, h
 	// Use DiffProcessor to chunk logic, which now supports hunk splitting
 	chunks := g.diffProcessor.Chunk(d, g.maxChunkSize)
 
+	// Initial progress report for the summarizing phase
+	if onProgress != nil && len(chunks) > 0 {
+		onProgress(0, len(chunks), "Starting chunk summaries...")
+	}
+
 	summaries, err := g.generateSummaries(ctx, chunks, onProgress)
 	if err != nil {
 		return nil, err
+	}
+
+	// Progress report for the final aggregation phase
+	if onProgress != nil {
+		onProgress(len(chunks), len(chunks), "Aggregating")
 	}
 
 	return g.generateFinalFromSummaries(ctx, summaries, hint)
@@ -253,6 +263,11 @@ Based on these summaries, generate a single Conventional Commit message.`, combi
 	}
 
 	systemPrompt := g.promptBuilder.GetSystemPrompt()
+
+	// Final progress update for aggregation
+	// Note: since we don't have a specific file here, we use a generic label
+	// We call AIModel.GenerateCommitMessage twice in total (once here)
+	// For simplicity, we just keep the phase name.
 
 	rawResp, err := g.aiModel.GenerateCommitMessage(ctx, systemPrompt, aggregationPrompt)
 	if err != nil {

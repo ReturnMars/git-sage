@@ -75,22 +75,18 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 				stagedDiff, err = w.git.GetStagedChanges(ctx)
 				stopSpinner()
 				if err != nil {
-					w.ui.ShowError(err)
 					return err
 				}
 			} else {
 				return errors.New("no staged changes - operation cancelled")
 			}
 		} else {
-			w.ui.ShowError(err)
 			return err
 		}
 	}
 
 	if len(stagedDiff.Files) == 0 {
-		err := errors.New("no staged changes found")
-		w.ui.ShowError(err)
-		return err
+		return errors.New("no staged changes found")
 	}
 
 	// 2. Generate Loop
@@ -111,8 +107,15 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 			time.Sleep(50 * time.Millisecond)
 		}
 
-		// Generate message - progress bar will auto-switch to "Waiting for AI" phase
-		// as it reaches 100% or transitions to summarizing chunks.
+		// Transition to AI phase immediately to prevent the UI from feeling "stuck"
+		progressChan <- ports.FileProgress{
+			Current:  0,
+			Total:    totalFiles,
+			FileName: "Starting AI summarization...",
+			Phase:    "Summarizing",
+		}
+
+		// Generate message
 		msg, err := w.generator.Generate(ctx, stagedDiff, hint, func(current, total int, filename string) {
 			progressChan <- ports.FileProgress{
 				Current:  current,
@@ -124,7 +127,6 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 		stopProgress()
 
 		if err != nil {
-			w.ui.ShowError(err)
 			return err
 		}
 
@@ -142,7 +144,6 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 			stopSpinner = w.ui.ShowProgress("Pushing to remote...")
 			if pushErr := w.git.Push(ctx); pushErr != nil {
 				stopSpinner()
-				w.ui.ShowError(pushErr)
 				return pushErr
 			}
 			stopSpinner()
@@ -181,7 +182,6 @@ func (w *CommitWorkflow) Run(ctx context.Context, hint string, autoAccept bool) 
 				stopSpinner = w.ui.ShowProgress("Pushing to remote...")
 				if pushErr := w.git.Push(ctx); pushErr != nil {
 					stopSpinner()
-					w.ui.ShowError(pushErr)
 					return pushErr
 				}
 				stopSpinner()

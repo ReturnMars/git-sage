@@ -160,16 +160,22 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.total = msg.Total
 		}
 		m.filename = msg.FileName
-		if msg.Phase != "" {
+		if msg.Phase != "" && msg.Phase != m.phaseStr {
 			m.phaseStr = msg.Phase
-			m.phase = 1 // Stay in bar mode if phase is specified
+			// Automatically switch view mode based on phase name
+			if m.phaseStr == "Summarizing" || m.phaseStr == "Aggregating" {
+				m.phase = 2 // AI Generation mode
+				// Ensure spinner keeps ticking when we switch phase
+				return m, m.spinner.Tick
+			} else {
+				m.phase = 1 // Local Analysis mode
+			}
 		}
 
 		// Calculate percentage
 		pct := float64(m.current) / float64(m.total)
 		cmd := m.progress.SetPercent(pct)
 
-		// Check if done with current phase handled externally
 		return m, cmd
 
 	case switchToSpinnerMsg:
@@ -178,9 +184,7 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
-		if m.phase == 2 {
-			m.spinner, cmd = m.spinner.Update(msg)
-		}
+		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
 	case progress.FrameMsg:
@@ -201,39 +205,45 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m progressModel) View() string {
 	if m.quitting {
-		// Final success message
-		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		return fmt.Sprintf("  %s Analyzed staged changes\n  %s Commit message generated!\n",
-			successStyle.Render("✓"),
-			successStyle.Render("✓"))
+		return ""
+	}
+
+	phaseStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+
+	// Truncate filename
+	displayName := m.filename
+	if len(displayName) > 25 {
+		displayName = "..." + displayName[len(displayName)-22:]
 	}
 
 	if m.phase == 1 {
-		// Progress Bar View
-		fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-		phaseStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-
-		phaseName := m.phaseStr
-		if phaseName == "" {
-			phaseName = "Analyzing"
-		}
-
-		// Truncate filename
-		displayName := m.filename
-		if len(displayName) > 25 {
-			displayName = "..." + displayName[len(displayName)-22:]
-		}
-
+		// Phase 1: Local Analysis
 		return fmt.Sprintf("\r  %s %s: %s (%d/%d)   ",
 			m.progress.View(),
-			phaseStyle.Render(phaseName),
+			phaseStyle.Render(m.phaseStr),
 			fileStyle.Render(displayName),
 			m.current, m.total)
 	}
 
-	// Phase 2: Spinner
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	return fmt.Sprintf("\r  %s Generating commit message... %s", m.spinner.View(), dimStyle.Render("(this may take a moment)   "))
+	// Phase 2: AI Generation
+	// Use spinner + progress bar for a premium "working" feel
+	msg := "Processing..."
+	switch m.phaseStr {
+	case "Summarizing":
+		msg = "Extracting features"
+	case "Aggregating":
+		msg = "Finalizing"
+	}
+
+	return fmt.Sprintf("\r  %s %s %s: %s (%d/%d) %s  ",
+		m.spinner.View(),
+		m.progress.View(),
+		phaseStyle.Render(m.phaseStr),
+		fileStyle.Render(msg),
+		m.current, m.total,
+		dimStyle.Render(displayName))
 }
 
 // ShowStreamingText displays streaming text from AI in real-time using Bubble Tea.
@@ -333,29 +343,27 @@ func (m streamingModel) View() string {
 
 // ReviewMessage presents the commit message to the user for review.
 func (u *ConsoleUI) ReviewMessage(ctx context.Context, msg *domain.CommitMessage) (ports.UserAction, *domain.CommitMessage, error) {
-	// Prepare content
-	var content string
+	// Prepare content with explicit width for wrapping
+	contentWidth := 70
+	subject := u.styles.Subject.Width(contentWidth).Render(msg.Subject)
+	body := ""
 	if msg.Body != "" {
-		content = fmt.Sprintf("%s\n\n%s",
-			u.styles.Subject.Render(msg.Subject),
-			u.styles.Body.Render(msg.Body),
-		)
-	} else {
-		content = u.styles.Subject.Render(msg.Subject)
+		body = u.styles.Body.Width(contentWidth).Render(msg.Body)
 	}
 
-	// Calculate content lines to adjust viewport height
-	// We count newlines. Soft-wrapping isn't accounted for unless using lipgloss.Width.
-	// For better accuracy with long lines, we could improve this, but for now strict line count is safer.
-	lines := strings.Count(content, "\n") + 1
+	content := subject
+	if body != "" {
+		content += "\n\n" + body
+	}
 
-	// Dynamic height: min 5 (to accommodate subject + spacing + minimal body or padding), max 15
+	// Calculate content cells and height accurately
+	contentHeight := lipgloss.Height(content)
+
+	// Dynamic height: min 5, max 25 (allowing more space for wrapped content)
 	const minHeight = 5
-	const maxHeight = 15
+	const maxHeight = 25
 
-	height := lines
-	// Since we wrap border OUTSIDE, the viewport height is purely for content.
-
+	height := contentHeight
 	if height < minHeight {
 		height = minHeight
 	}
@@ -363,12 +371,10 @@ func (u *ConsoleUI) ReviewMessage(ctx context.Context, msg *domain.CommitMessage
 		height = maxHeight
 	}
 
-	const width = 80
+	const viewportWidth = 80 // Control the viewport container width
 
-	vp := viewport.New(width, height)
+	vp := viewport.New(viewportWidth, height)
 	vp.SetContent(content)
-	// Do NOT set vp.Style = border here, as it eats into the height layout.
-	// We will render border in the View() method.
 
 	model := reviewModel{
 		viewport:    vp,
@@ -453,39 +459,46 @@ func (u *ConsoleUI) editMessageWithEditor(msg *domain.CommitMessage) (*domain.Co
 	return newMsg, nil
 }
 
-// ShowError displays an error with helpful suggestions for common issues.
+// ShowError displays an error with helpful suggestions in a compact, focused layout.
 func (u *ConsoleUI) ShowError(err error) {
 	if err == nil {
 		return
 	}
 
 	errMsg := err.Error()
-	statusStyle := lipgloss.NewStyle().
+
+	// 1. Primary: The Error
+	errorTag := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("196")).
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("196")).
 		Padding(0, 1).
-		MarginRight(1).
-		SetString(" ERROR ")
+		Render(" ERROR ")
 
-	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	errorMsg := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Bold(true).
+		Render(errMsg)
 
-	fmt.Printf("\n%s %s\n", statusStyle.Background(lipgloss.Color("196")).Foreground(lipgloss.Color("255")).Render(), contentStyle.Render(errMsg))
+	fmt.Printf("\n  %s %s\n", errorTag, errorMsg)
 
-	// Provide helpful suggestions for common errors
-	suggestionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
-
+	// 2. Secondary: The Suggestion (Subtle & Indented)
+	message := ""
 	if strings.Contains(errMsg, "429") && strings.Contains(strings.ToLower(errMsg), "balance") {
-		fmt.Printf("  %s %s\n",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("💡 Suggestion:"),
-			suggestionStyle.Render("Your AI provider account balance is insufficient. Please check your credit and top up."))
+		message = "Your account balance is insufficient. Please top up your provider credit."
 	} else if strings.Contains(errMsg, "429") {
-		fmt.Printf("  %s %s\n",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("💡 Suggestion:"),
-			suggestionStyle.Render("Rate limit exceeded. Please wait a moment and try again."))
+		message = "Rate limit exceeded. Please wait a moment and try again."
 	} else if strings.Contains(errMsg, "api_key") || strings.Contains(errMsg, "authentication") {
-		fmt.Printf("  %s %s\n",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("💡 Suggestion:"),
-			suggestionStyle.Render("Invalid API key. Use 'gitsage config set provider.api_key' to update it."))
+		message = "Invalid API key. Run 'gitsage config set provider.api_key' to fix."
+	}
+
+	if message != "" {
+		suggestionStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("243")). // Dimmed grey
+			Italic(true)
+
+		// Aligning with the start of the error message text
+		fmt.Printf("          %s\n", suggestionStyle.Render("💡 "+message))
 	}
 	fmt.Println()
 }
@@ -499,7 +512,8 @@ func (u *ConsoleUI) ShowSuccess(msg string) {
 func (u *ConsoleUI) PromptConfirm(msg string) (bool, error) {
 	// Use a style without margin to keep prompt on the same line
 	promptStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	fmt.Printf("%s [Y/n]: ", promptStyle.Render(msg))
+	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+	fmt.Printf("%s [%s/n]: ", promptStyle.Render(msg), accentStyle.Render("Y"))
 
 	// Simple scanner
 	var response string
@@ -533,12 +547,13 @@ type Styles struct {
 }
 
 func NewStyles() *Styles {
+	const contentWidth = 74 // Widened for better Chinese text support (Container is 80)
 	return &Styles{
 		Title:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).MarginBottom(1),
-		Subject: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220")),
-		Body:    lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+		Subject: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220")).Width(contentWidth),
+		Body:    lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Width(contentWidth),
 		Error:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")),
-		Border:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2),
+		Border:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 1), // Slightly reduced padding for more content space
 	}
 }
 
